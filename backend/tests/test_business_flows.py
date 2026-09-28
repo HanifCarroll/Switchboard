@@ -1,9 +1,11 @@
 from datetime import datetime, timezone
+from unittest.mock import Mock
 from uuid import UUID, uuid4
 
 import pytest
 from pydantic import HttpUrl
 
+from switchboard import change_management, proposals
 from switchboard.change_management import (
     approve_proposal,
     execute_proposal,
@@ -29,6 +31,15 @@ from switchboard.models import (
     ReportValidation,
 )
 from switchboard.proposals import validate_proposal
+
+
+@pytest.fixture(autouse=True)
+def fixed_business_time(monkeypatch):
+    """Create proposals and approvals before the scenario's execution time."""
+    scenario_clock = Mock(wraps=datetime)
+    scenario_clock.now.return_value = datetime(2026, 9, 22, 14, 10, tzinfo=timezone.utc)
+    monkeypatch.setattr(change_management, "datetime", scenario_clock)
+    monkeypatch.setattr(proposals, "datetime", scenario_clock)
 
 
 def candidate() -> InvestigationResult:
@@ -140,6 +151,24 @@ def test_execution_is_atomic_and_returns_the_same_receipt_on_retry(storage):
     assert retry.execution.id == first.execution.id
     assert integration["endpoint"] == "https://events.acme.example/deals"
     assert integration["version"] == 8
+
+
+def test_execution_before_approval_is_rejected_without_writes(storage):
+    proposal = saved_proposal(storage)
+    approve_proposal(
+        proposal_id=proposal.id,
+        session=EmployeeSession(storage=storage, employee_id="emp-priya"),
+    )
+
+    with pytest.raises(ValueError, match="Execution time precedes approval"):
+        execute_proposal(
+            proposal_id=proposal.id,
+            session=EmployeeSession(storage=storage, employee_id="emp-alex"),
+            executed_at=datetime(2026, 9, 22, 14, 9, tzinfo=timezone.utc),
+        )
+
+    assert storage.get_execution(proposal_id=proposal.id) is None
+    assert storage.get_integration(integration_id="int-acme-prod")["version"] == 7
 
 
 def test_successful_delivery_verification_closes_the_ticket(storage):

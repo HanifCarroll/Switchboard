@@ -1,10 +1,14 @@
 """Model configuration and LangGraph-backed agent construction."""
 
 import json
+import os
 from pathlib import Path
 
+from botocore.config import Config
 from langchain.agents import AgentState, create_agent
 from langchain.agents.middleware import ToolErrorMiddleware, before_model
+from langchain_aws import ChatBedrockConverse
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_deepseek import ChatDeepSeek
 from langgraph.runtime import Runtime
 
@@ -13,6 +17,7 @@ from switchboard.investigation.tools import TOOLS, InvestigationContext
 from switchboard.models import InvestigationResult
 
 MODEL = "deepseek-flash"
+BEDROCK_MODEL_ID = "deepseek.v3.2"
 
 
 @before_model
@@ -24,6 +29,22 @@ def check_investigation_deadline(
 
 
 def create_model():
+    provider = os.getenv("SWITCHBOARD_MODEL_PROVIDER", "deepseek")
+    if provider == "bedrock":
+        return ChatBedrockConverse(
+            model=BEDROCK_MODEL_ID,
+            region_name="us-east-1",
+            credentials_profile_name=os.getenv("BEDROCK_PROFILE"),
+            max_tokens=8192,
+            config=Config(
+                connect_timeout=5,
+                read_timeout=60,
+                retries={"mode": "standard", "total_max_attempts": 2},
+            ),
+        )
+    if provider != "deepseek":
+        raise ValueError("SWITCHBOARD_MODEL_PROVIDER must be bedrock or deepseek")
+
     return ChatDeepSeek(
         model=MODEL,
         extra_body={"thinking": {"type": "enabled"}},
@@ -31,6 +52,12 @@ def create_model():
         timeout=60,
         max_retries=1,
     )
+
+
+def policy_review_model(model: BaseChatModel):
+    if isinstance(model, ChatDeepSeek):
+        return model.bind(extra_body={"thinking": {"type": "disabled"}})
+    return model
 
 
 def explain_unavailable_record(error: Exception, request) -> str | None:

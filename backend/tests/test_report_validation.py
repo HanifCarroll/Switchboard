@@ -6,6 +6,7 @@ from unittest.mock import Mock
 import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
+from langchain_deepseek import ChatDeepSeek
 
 from switchboard.investigation.report_validation import (
     PolicySource,
@@ -82,7 +83,7 @@ def test_clean_report_passes_without_revision():
 
 
 def test_policy_review_disables_model_thinking():
-    model = Mock()
+    model = Mock(spec=ChatDeepSeek)
     validation_model = model.bind.return_value
     validation_model.invoke.return_value = AIMessage(content='{"issues": []}')
 

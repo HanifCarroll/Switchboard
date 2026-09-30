@@ -24,6 +24,7 @@ from switchboard.investigation.tools import InvestigationContext
 from switchboard.storage import StorageError, WorkspaceStorage
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 TERMINAL = {"completed", "failed"}
 
 

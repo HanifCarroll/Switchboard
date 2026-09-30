@@ -17,7 +17,7 @@ Switchboard models an internal team managing webhook endpoint changes for a B2B 
 
 The dashboard presents evidence, decision criteria, blockers, approvals, and action receipts. Investigations run in the background and can be reopened after navigation or reload. Each visitor receives an isolated workspace and can switch between fictional employee personas to explore the access rules.
 
-The company, customer data, and delivery events are synthetic. Investigations use a real DeepSeek model; delivery verification is deterministic and does not contact a real webhook. Microsoft Entra authentication is supported for configured workspaces; the public demo uses fictional identities.
+The company, customer data, and delivery events are synthetic. Investigations use a real model through Amazon Bedrock or the DeepSeek API; delivery verification is deterministic and does not contact a real webhook. Microsoft Entra authentication is supported for configured workspaces; the public demo uses fictional identities.
 
 ## Engineering
 
@@ -26,6 +26,8 @@ The company, customer data, and delivery events are synthetic. Investigations us
 - **AWS Lambda and CloudFront:** separate website, API, and investigation worker; protected origins and appropriate response caching.
 - **DynamoDB:** workspace generations, conditional business transactions, canonical proposals, immutable result chunks, and retry-safe receipts.
 - **SQS and EventBridge Scheduler:** durable submissions, native retries, worker leases, dead-letter handling, and scheduled recovery.
+- **Amazon Bedrock:** IAM-authenticated model calls through the Converse API, using the same access-controlled tools and report validation.
+- **CloudWatch and OpenTelemetry:** operational alarms, a dashboard, and sampled traces of API requests, queue delivery, database calls, and model calls.
 - **GitHub Actions:** deterministic checks, scoped OIDC deployment, immutable function versions, and independent releases.
 
 See [architecture and reliability](docs/architecture.md) for the boundaries and tradeoffs, or [AWS operations](aws/README.md) for deployment and recovery commands.
@@ -42,11 +44,14 @@ Requirements: Python 3.11+, uv, Node.js 24, AWS CLI, and Docker.
 
 Open http://localhost:3000. The script starts DynamoDB Local, the Python API, and Next.js. Local records persist in the `switchboard-local-data` Docker volume. Investigations use deterministic fixtures by default, through the same authorization and persistence rules.
 
-For real investigations, set `DEEPSEEK_API_KEY` in ignored `backend/.env`, then run:
+For real investigations through Bedrock, use an authenticated AWS profile with access to `deepseek.v3.2`, then run:
 
 ```sh
-SWITCHBOARD_INVESTIGATION_MODE=live ./scripts/dev
+BEDROCK_PROFILE=hc-studio SWITCHBOARD_MODEL_PROVIDER=bedrock \
+  SWITCHBOARD_INVESTIGATION_MODE=live ./scripts/dev
 ```
+
+The `BEDROCK_PROFILE` is separate from the local database credentials. To use the direct DeepSeek provider, set `DEEPSEEK_API_KEY` in ignored `backend/.env` and select `SWITCHBOARD_MODEL_PROVIDER=deepseek`.
 
 For Microsoft sign-in, copy the browser values from `frontend/entra.example.env` to `frontend/.env.local` and server values from `backend/entra.example.env` to `backend/.env`. Local authentication supports both demo and Microsoft sign-in.
 

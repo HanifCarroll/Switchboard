@@ -8,6 +8,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 from urllib.request import urlopen
@@ -20,6 +21,10 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / ".aws-build"
 LOCAL = ROOT / "aws" / "local"
 LAYER = "arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerX86:30"
+TRACE_LAYER = (
+    "arn:aws:lambda:us-east-1:901920570463:layer:aws-otel-python-amd64-ver-1-32-0:7"
+)
+TRACE_LAYER_BYTES = 59807429
 
 
 def run(arguments, directory, env=None):
@@ -98,7 +103,41 @@ def build(component, session):
         )
         for name in ["fixtures", "scenarios"]:
             shutil.copytree(ROOT / "backend" / "data" / name, directory / "data" / name)
-        receipts["backend"] = package(directory, BUILD / "backend.zip")
+        # Ship only the AWS service definitions used by the application.
+        services = {"bedrock", "bedrock-runtime", "dynamodb", "sqs", "sts", "xray"}
+        for service in (directory / "botocore" / "data").iterdir():
+            if service.is_dir() and service.name not in services:
+                shutil.rmtree(service)
+        if sys.platform.startswith("linux"):
+            run(
+                [
+                    "uv",
+                    "run",
+                    "--no-project",
+                    "--python",
+                    "3.12",
+                    "python",
+                    "-c",
+                    "from switchboard.lambda_handler import handler; "
+                    "from switchboard.jobs import worker_handler; "
+                    "from switchboard.investigation.agent import create_model; "
+                    "import boto3; "
+                    "[boto3.client(name) for name in ('dynamodb', 'sqs', 'xray', 'sts')]; "
+                    "assert create_model().model_id == 'deepseek.v3.2'",
+                ],
+                directory,
+                {
+                    **os.environ,
+                    "PYTHONPATH": str(directory),
+                    "AWS_ACCESS_KEY_ID": "package-check",
+                    "AWS_SECRET_ACCESS_KEY": "package-check",
+                    "AWS_DEFAULT_REGION": "us-east-1",
+                    "SWITCHBOARD_MODEL_PROVIDER": "bedrock",
+                },
+            )
+        receipts["backend"] = package(
+            directory, BUILD / "backend.zip", layer_bytes=TRACE_LAYER_BYTES
+        )
 
     # 2. Bundle Next.js and retain one release of static assets.
     if component in {"website", "all"}:
@@ -189,7 +228,7 @@ def build(component, session):
     )
 
 
-def provision(session):
+def provision(session, alert_email=None):
     client = session.client("cloudformation")
     arguments = {
         "StackName": "switchboard",
@@ -197,13 +236,28 @@ def provision(session):
         "Capabilities": ["CAPABILITY_NAMED_IAM"],
     }
     try:
-        client.describe_stacks(StackName="switchboard")
+        existing = client.describe_stacks(StackName="switchboard")["Stacks"][0]
     except client.exceptions.ClientError as error:
         if "does not exist" not in str(error):
             raise
+        if alert_email is not None:
+            arguments["Parameters"] = [
+                {"ParameterKey": "AlertEmail", "ParameterValue": alert_email}
+            ]
         client.create_stack(**arguments)
         waiter = "stack_create_complete"
     else:
+        if alert_email is not None:
+            arguments["Parameters"] = [
+                {"ParameterKey": "AlertEmail", "ParameterValue": alert_email}
+            ]
+        elif any(
+            item["ParameterKey"] == "AlertEmail"
+            for item in existing.get("Parameters", [])
+        ):
+            arguments["Parameters"] = [
+                {"ParameterKey": "AlertEmail", "UsePreviousValue": True}
+            ]
         try:
             client.update_stack(**arguments)
         except ClientError as error:
@@ -228,7 +282,7 @@ def outputs(session):
     }
 
 
-def release(session, component, mode="live"):
+def release(session, component, mode="live", model_provider=None):
     # 1. Resolve runtime settings and preserve rollback information before changes.
     values = outputs(session)
     client = session.client("lambda")
@@ -266,22 +320,34 @@ def release(session, component, mode="live"):
             previous.pop(name, None)
         receipt_path.write_text(json.dumps(previous, indent=2) + "\n")
         env = dict(common)
+        env.update(
+            AWS_LAMBDA_EXEC_WRAPPER="/opt/otel-instrument",
+            OTEL_SERVICE_NAME=function,
+            OTEL_METRICS_EXPORTER="none",
+            OTEL_LOGS_EXPORTER="none",
+            OTEL_PYTHON_DISABLED_INSTRUMENTATIONS="fastapi,httpx,requests,urllib,urllib3",
+        )
         env["INVESTIGATION_QUEUE_URL"] = values["Investigations"]
         if name == "api":
             env["INVESTIGATION_DLQ_URL"] = values["DeadLetters"]
         if name == "worker":
+            current_env = (
+                client.get_function_configuration(FunctionName=function)
+                .get("Environment", {})
+                .get("Variables", {})
+            )
+            provider = model_provider or current_env.get(
+                "SWITCHBOARD_MODEL_PROVIDER", "deepseek"
+            )
+            env["SWITCHBOARD_MODEL_PROVIDER"] = provider
             if not model_key:
-                model_key = (
-                    client.get_function_configuration(FunctionName=function)
-                    .get("Environment", {})
-                    .get("Variables", {})
-                    .get("DEEPSEEK_API_KEY")
-                )
-            if not model_key:
+                model_key = current_env.get("DEEPSEEK_API_KEY")
+            if provider == "deepseek" and not model_key:
                 raise RuntimeError(
                     "DEEPSEEK_API_KEY is required for initial worker deployment"
                 )
-            env["DEEPSEEK_API_KEY"] = model_key
+            if provider == "deepseek":
+                env["DEEPSEEK_API_KEY"] = model_key
         if name == "website":
             env = {
                 "AWS_LAMBDA_EXEC_WRAPPER": "/opt/bootstrap",
@@ -300,7 +366,8 @@ def release(session, component, mode="live"):
             if name == "worker"
             else "switchboard.lambda_handler.handler",
             Environment={"Variables": env},
-            Layers=[LAYER] if name == "website" else [],
+            Layers=[LAYER] if name == "website" else [TRACE_LAYER],
+            TracingConfig={"Mode": "Active"},
         )
         client.get_waiter("function_updated_v2").wait(FunctionName=function)
         client.update_function_code(
@@ -620,14 +687,20 @@ def main():
         "--component", choices=["all", "backend", "website"], default="all"
     )
     parser.add_argument("--profile", default=os.getenv("AWS_PROFILE"))
+    parser.add_argument("--alert-email", help="SNS alert recipient (provision only)")
+    parser.add_argument(
+        "--model-provider",
+        choices=["bedrock", "deepseek"],
+        help="Worker provider (release only)",
+    )
     arguments = parser.parse_args()
     session = boto3.Session(profile_name=arguments.profile, region_name="us-east-1")
     if arguments.action == "build":
         build(arguments.component, session)
     elif arguments.action == "provision":
-        provision(session)
+        provision(session, arguments.alert_email)
     elif arguments.action == "release":
-        release(session, arguments.component)
+        release(session, arguments.component, model_provider=arguments.model_provider)
     elif arguments.action == "jobs":
         connect_jobs(session)
     elif arguments.action == "delivery":

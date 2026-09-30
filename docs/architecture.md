@@ -13,7 +13,10 @@ flowchart LR
     API --> SQS
     SQS --> Worker[Investigation Lambda]
     Worker --> DynamoDB
-    Worker --> DeepSeek
+    Worker --> Bedrock[Amazon Bedrock]
+    API -. traces .-> XRay[AWS X-Ray]
+    Worker -. traces .-> XRay
+    CloudWatch[CloudWatch alarms] --> SNS[SNS notifications]
     SQS --> DLQ[Dead-letter queue]
     Scheduler[EventBridge Scheduler] --> API
 ```
@@ -25,6 +28,8 @@ CloudFront routes `/api/*` to the API and other paths to the website. Both Funct
 ## Investigation
 
 The LangGraph workflow carries employee identity, storage, and trusted time outside model-facing arguments. Its tools retrieve tickets, customers, integrations, and policies by ID. Each tool checks current employee roles and customer assignments before returning data.
+
+The Bedrock provider uses `deepseek.v3.2` through the Converse API. Only the worker role can invoke that model; the website and API receive no model permissions. The direct DeepSeek API is also supported through an explicit provider setting. Provider failures remain failures and follow the existing queue retry policy; there is no automatic provider fallback.
 
 The model returns a Pydantic-validated report with findings, decision criteria, blockers, and evidence references. A separate model call checks the report against the retrieved policies. One revision is allowed; a report that still fails validation is not published. Approval requirements are represented as later-stage conditions rather than confused with proposal blockers.
 
@@ -61,6 +66,12 @@ Conditional transactions keep proposals and deduplication pointers together, pre
 Anonymous visitors receive Secure, HttpOnly, SameSite cookies and isolated workspaces with a sliding 24-hour lifetime. The persona selector changes the fictional employee being simulated; it does not bypass server authorization. Microsoft Entra mode validates tenant, audience, delegated scope, client, timestamps, and the employee mapping. Supplying a bearer token together with a demo persona is rejected.
 
 Key implementation: [DynamoDB operations](../backend/switchboard/dynamodb.py), [request context](../backend/switchboard/api/context.py), and [authentication](../backend/switchboard/auth.py).
+
+## Observability
+
+CloudWatch retains structured logs for seven days and supplies a dashboard for Lambda, SQS, DynamoDB, Bedrock, and failed investigations. Standard alarms notify an SNS topic about function errors, sustained queue age, dead-letter messages, and permanently rejected investigations. A policy-blocked investigation is a successful report, not an operational failure. Email subscriptions require SNS confirmation.
+
+All functions enable sampled Lambda tracing. API and worker functions use the pinned AWS Distro for OpenTelemetry Python layer to trace Lambda entry points and AWS SDK calls. This includes DynamoDB operations, SQS dispatch and processing, and Bedrock requests. The website uses Lambda invocation tracing. Generic HTTP instrumentation is disabled; model prompts, responses, credentials, and customer records are not added to trace attributes.
 
 ## Scope
 

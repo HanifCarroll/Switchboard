@@ -1,6 +1,6 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
-  "Description": "Switchboard application storage, queues, Lambda functions, logs, and execution roles.",
+  "Description": "Switchboard application storage, queues, Lambda functions, observability, and execution roles.",
   "Resources": {
     "Database": {
       "Type": "AWS::DynamoDB::Table",
@@ -144,6 +144,14 @@
                       "Arn"
                     ]
                   }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "xray:PutTraceSegments",
+                    "xray:PutTelemetryRecords"
+                  ],
+                  "Resource": "*"
                 }
               ]
             }
@@ -172,10 +180,14 @@
           "LogFormat": "JSON",
           "LogGroup": {
             "Ref": "APILogs"
-          }
+          },
+          "ApplicationLogLevel": "INFO"
         },
         "Code": {
           "ZipFile": "def handler(event, context):\n    return {\"statusCode\":503,\"body\":\"Deployment pending\"}"
+        },
+        "TracingConfig": {
+          "Mode": "Active"
         }
       }
     },
@@ -248,6 +260,22 @@
                       "Arn"
                     ]
                   }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "xray:PutTraceSegments",
+                    "xray:PutTelemetryRecords"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "bedrock:InvokeModel",
+                    "bedrock:InvokeModelWithResponseStream"
+                  ],
+                  "Resource": "arn:aws:bedrock:us-east-1::foundation-model/deepseek.v3.2"
                 }
               ]
             }
@@ -276,10 +304,14 @@
           "LogFormat": "JSON",
           "LogGroup": {
             "Ref": "WorkerLogs"
-          }
+          },
+          "ApplicationLogLevel": "INFO"
         },
         "Code": {
           "ZipFile": "def handler(event, context):\n    return {\"statusCode\":503,\"body\":\"Deployment pending\"}"
+        },
+        "TracingConfig": {
+          "Mode": "Active"
         }
       }
     },
@@ -321,6 +353,14 @@
                   "Resource": {
                     "Fn::Sub": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/switchboard-website:*"
                   }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "xray:PutTraceSegments",
+                    "xray:PutTelemetryRecords"
+                  ],
+                  "Resource": "*"
                 }
               ]
             }
@@ -353,6 +393,9 @@
         },
         "Code": {
           "ZipFile": "exports.handler = async () => ({statusCode:503,body:\"Deployment pending\"});"
+        },
+        "TracingConfig": {
+          "Mode": "Active"
         }
       }
     },
@@ -430,7 +473,7 @@
               "Condition": {
                 "StringEquals": {
                   "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-                  "token.actions.githubusercontent.com:sub": "repo:HanifCarroll/b2b-saas-internal-agent:ref:refs/heads/main"
+                  "token.actions.githubusercontent.com:sub": "repo:HanifCarroll@26860300/b2b-saas-internal-agent@1375983110:ref:refs/heads/main"
                 }
               }
             }
@@ -481,11 +524,251 @@
                   "Resource": {
                     "Ref": "AWS::StackId"
                   }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "lambda:GetLayerVersion",
+                  "Resource": [
+                    "arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerX86:30",
+                    "arn:aws:lambda:us-east-1:901920570463:layer:aws-otel-python-amd64-ver-1-32-0:7"
+                  ]
                 }
               ]
             }
           }
         ]
+      }
+    },
+    "Alerts": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "TopicName": "switchboard-alerts",
+        "DisplayName": "Switchboard operational alerts"
+      }
+    },
+    "AlertSubscription": {
+      "Type": "AWS::SNS::Subscription",
+      "Condition": "HasAlertEmail",
+      "Properties": {
+        "TopicArn": {
+          "Ref": "Alerts"
+        },
+        "Protocol": "email",
+        "Endpoint": {
+          "Ref": "AlertEmail"
+        }
+      }
+    },
+    "APIErrorsAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": "switchboard-APIErrors",
+        "AlarmDescription": "See the Switchboard dashboard and AWS operations guide for investigation and recovery.",
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": "switchboard-api"
+          }
+        ]
+      }
+    },
+    "WorkerErrorsAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": "switchboard-WorkerErrors",
+        "AlarmDescription": "See the Switchboard dashboard and AWS operations guide for investigation and recovery.",
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": "switchboard-worker"
+          }
+        ]
+      }
+    },
+    "WebsiteErrorsAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": "switchboard-WebsiteErrors",
+        "AlarmDescription": "See the Switchboard dashboard and AWS operations guide for investigation and recovery.",
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": "switchboard-website"
+          }
+        ]
+      }
+    },
+    "QueueBacklogAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": "switchboard-QueueBacklog",
+        "AlarmDescription": "See the Switchboard dashboard and AWS operations guide for investigation and recovery.",
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateAgeOfOldestMessage",
+        "Statistic": "Maximum",
+        "Period": 300,
+        "EvaluationPeriods": 2,
+        "Threshold": 900,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": "switchboard-investigations"
+          }
+        ]
+      }
+    },
+    "DeadLetterJobsAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": "switchboard-DeadLetterJobs",
+        "AlarmDescription": "See the Switchboard dashboard and AWS operations guide for investigation and recovery.",
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateNumberOfMessagesVisible",
+        "Statistic": "Maximum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": "switchboard-failed"
+          }
+        ]
+      }
+    },
+    "RejectedJobsAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": "switchboard-RejectedJobs",
+        "AlarmDescription": "See the Switchboard dashboard and AWS operations guide for investigation and recovery.",
+        "Namespace": "Switchboard",
+        "MetricName": "FailedInvestigations",
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ]
+      }
+    },
+    "FailedJobsMetric": {
+      "Type": "AWS::Logs::MetricFilter",
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "WorkerLogs"
+        },
+        "FilterPattern": "{ $.message = \"Investigation rejected\" }",
+        "MetricTransformations": [
+          {
+            "MetricNamespace": "Switchboard",
+            "MetricName": "FailedInvestigations",
+            "MetricValue": "1",
+            "DefaultValue": 0,
+            "Unit": "Count"
+          }
+        ]
+      }
+    },
+    "Dashboard": {
+      "Type": "AWS::CloudWatch::Dashboard",
+      "Properties": {
+        "DashboardName": "switchboard",
+        "DashboardBody": "{\"widgets\": [{\"type\": \"metric\", \"x\": 0, \"y\": 0, \"width\": 24, \"height\": 6, \"properties\": {\"title\": \"Lambda invocations and errors\", \"region\": \"us-east-1\", \"period\": 300, \"stat\": \"Sum\", \"metrics\": [[\"AWS/Lambda\", \"Invocations\", \"FunctionName\", \"switchboard-api\"], [\"AWS/Lambda\", \"Errors\", \"FunctionName\", \"switchboard-api\"], [\"AWS/Lambda\", \"Throttles\", \"FunctionName\", \"switchboard-api\"], [\"AWS/Lambda\", \"Invocations\", \"FunctionName\", \"switchboard-worker\"], [\"AWS/Lambda\", \"Errors\", \"FunctionName\", \"switchboard-worker\"], [\"AWS/Lambda\", \"Throttles\", \"FunctionName\", \"switchboard-worker\"], [\"AWS/Lambda\", \"Invocations\", \"FunctionName\", \"switchboard-website\"], [\"AWS/Lambda\", \"Errors\", \"FunctionName\", \"switchboard-website\"], [\"AWS/Lambda\", \"Throttles\", \"FunctionName\", \"switchboard-website\"]]}}, {\"type\": \"metric\", \"x\": 0, \"y\": 6, \"width\": 24, \"height\": 6, \"properties\": {\"title\": \"Lambda duration\", \"region\": \"us-east-1\", \"period\": 300, \"stat\": \"p95\", \"metrics\": [[\"AWS/Lambda\", \"Duration\", \"FunctionName\", \"switchboard-api\"], [\"AWS/Lambda\", \"Duration\", \"FunctionName\", \"switchboard-worker\"], [\"AWS/Lambda\", \"Duration\", \"FunctionName\", \"switchboard-website\"]]}}, {\"type\": \"metric\", \"x\": 0, \"y\": 12, \"width\": 24, \"height\": 6, \"properties\": {\"title\": \"Investigation queues\", \"region\": \"us-east-1\", \"period\": 300, \"stat\": \"Maximum\", \"metrics\": [[\"AWS/SQS\", \"ApproximateNumberOfMessagesVisible\", \"QueueName\", \"switchboard-investigations\"], [\"AWS/SQS\", \"ApproximateNumberOfMessagesNotVisible\", \"QueueName\", \"switchboard-investigations\"], [\"AWS/SQS\", \"ApproximateAgeOfOldestMessage\", \"QueueName\", \"switchboard-investigations\"], [\"AWS/SQS\", \"ApproximateNumberOfMessagesVisible\", \"QueueName\", \"switchboard-failed\"], [\"AWS/SQS\", \"ApproximateNumberOfMessagesNotVisible\", \"QueueName\", \"switchboard-failed\"], [\"AWS/SQS\", \"ApproximateAgeOfOldestMessage\", \"QueueName\", \"switchboard-failed\"]]}}, {\"type\": \"metric\", \"x\": 0, \"y\": 18, \"width\": 24, \"height\": 6, \"properties\": {\"title\": \"DynamoDB capacity and throttling\", \"region\": \"us-east-1\", \"period\": 300, \"stat\": \"Sum\", \"metrics\": [[\"AWS/DynamoDB\", \"ConsumedReadCapacityUnits\", \"TableName\", \"switchboard\"], [\"AWS/DynamoDB\", \"ConsumedWriteCapacityUnits\", \"TableName\", \"switchboard\"], [\"AWS/DynamoDB\", \"ReadThrottleEvents\", \"TableName\", \"switchboard\"], [\"AWS/DynamoDB\", \"WriteThrottleEvents\", \"TableName\", \"switchboard\"]]}}, {\"type\": \"metric\", \"x\": 0, \"y\": 24, \"width\": 24, \"height\": 6, \"properties\": {\"title\": \"Bedrock invocations and tokens\", \"region\": \"us-east-1\", \"period\": 300, \"stat\": \"Sum\", \"metrics\": [[\"AWS/Bedrock\", \"Invocations\", \"ModelId\", \"deepseek.v3.2\"], [\"AWS/Bedrock\", \"InvocationClientErrors\", \"ModelId\", \"deepseek.v3.2\"], [\"AWS/Bedrock\", \"InvocationServerErrors\", \"ModelId\", \"deepseek.v3.2\"], [\"AWS/Bedrock\", \"InvocationThrottles\", \"ModelId\", \"deepseek.v3.2\"], [\"AWS/Bedrock\", \"InputTokenCount\", \"ModelId\", \"deepseek.v3.2\"], [\"AWS/Bedrock\", \"OutputTokenCount\", \"ModelId\", \"deepseek.v3.2\"]]}}, {\"type\": \"metric\", \"x\": 0, \"y\": 30, \"width\": 24, \"height\": 6, \"properties\": {\"title\": \"Rejected investigations\", \"region\": \"us-east-1\", \"period\": 300, \"stat\": \"Sum\", \"metrics\": [[\"Switchboard\", \"FailedInvestigations\"]]}}]}"
+      }
+    },
+    "AlertsPolicy": {
+      "Type": "AWS::SNS::TopicPolicy",
+      "Properties": {
+        "Topics": [
+          {
+            "Ref": "Alerts"
+          }
+        ],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudwatch.amazonaws.com"
+              },
+              "Action": "sns:Publish",
+              "Resource": {
+                "Ref": "Alerts"
+              },
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnLike": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:switchboard-*"
+                  }
+                }
+              }
+            }
+          ]
+        }
       }
     }
   },
@@ -544,6 +827,32 @@
           "Arn"
         ]
       }
+    },
+    "AlertsArn": {
+      "Value": {
+        "Ref": "Alerts"
+      }
+    }
+  },
+  "Parameters": {
+    "AlertEmail": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Email recipient for operational alerts; SNS confirmation is required."
+    }
+  },
+  "Conditions": {
+    "HasAlertEmail": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "AlertEmail"
+            },
+            ""
+          ]
+        }
+      ]
     }
   }
 }

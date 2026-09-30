@@ -96,7 +96,8 @@ def test_policy_review_uses_reasoning_and_json_output():
     model.bind.assert_called_once_with(
         extra_body={"thinking": {"type": "enabled"}},
         response_format={"type": "json_object"},
-        max_tokens=16384,
+        reasoning_effort="low",
+        max_tokens=8192,
     )
 
 

@@ -3,10 +3,12 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
+from unittest.mock import Mock
 from uuid import uuid4
 
 import boto3
 import pytest
+from botocore.exceptions import ClientError
 from moto import mock_aws
 
 from switchboard.change_management import approve_proposal, execute_proposal
@@ -182,3 +184,72 @@ def test_chunked_results_and_history(dynamo):
     )
     with pytest.raises(StorageError, match="Incomplete"):
         storage.get_run(run_id=run["id"])
+
+
+def test_transaction_conflict_retries_with_one_token(dynamo, monkeypatch):
+
+    # 1. Inject two temporary conflicts into a real transactional workspace.
+    storage = workspace(dynamo)
+    original = dynamo.client.transact_write_items
+    conflict = ClientError(
+        {
+            "Error": {"Code": "TransactionCanceledException"},
+            "CancellationReasons": [{"Code": "TransactionConflict"}],
+        },
+        "TransactWriteItems",
+    )
+    retrying_write = Mock(side_effect=[conflict, conflict, None])
+    monkeypatch.setattr(dynamo.client, "transact_write_items", retrying_write)
+    monkeypatch.setattr("switchboard.dynamodb.time.sleep", lambda seconds: None)
+    operation = dynamo.put(
+        dynamo.partition(storage.workspace_id), "TEST", {"saved": True}
+    )
+
+    # 2. Retry the same guarded transaction until the lock conflict clears.
+    dynamo.transaction(storage.workspace_id, [operation])
+
+    # 3. Verify one request token and the resulting stored record.
+    calls = retrying_write.call_args_list
+    assert len(calls) == 3
+    assert len({call.kwargs["ClientRequestToken"] for call in calls}) == 1
+    original(**calls[-1].kwargs)
+    assert dynamo.get(dynamo.partition(storage.workspace_id), "TEST") == {"saved": True}
+
+
+@pytest.mark.parametrize(
+    "reason_codes, expected_status, expected_calls",
+    [
+        (["ConditionalCheckFailed"], 409, 1),
+        (["TransactionConflict", "ConditionalCheckFailed"], 409, 1),
+        (["ValidationError"], 503, 1),
+        (["TransactionConflict"], 503, 4),
+    ],
+)
+def test_transaction_retry_keeps_conditions_and_has_a_bound(
+    dynamo, monkeypatch, reason_codes, expected_status, expected_calls
+):
+
+    # 1. Inject the cancellation reason without changing the workspace.
+    storage = workspace(dynamo)
+    error = ClientError(
+        {
+            "Error": {"Code": "TransactionCanceledException"},
+            "CancellationReasons": [{"Code": code} for code in reason_codes],
+        },
+        "TransactWriteItems",
+    )
+    failed_write = Mock(side_effect=error)
+    monkeypatch.setattr(dynamo.client, "transact_write_items", failed_write)
+    monkeypatch.setattr("switchboard.dynamodb.time.sleep", lambda seconds: None)
+    operation = dynamo.put(
+        dynamo.partition(storage.workspace_id), "TEST", {"saved": True}
+    )
+
+    # 2. Attempt the guarded write and retain its final error.
+    with pytest.raises(StorageError) as raised:
+        dynamo.transaction(storage.workspace_id, [operation])
+
+    # 3. Confirm bounded retries and that no rejected write became visible.
+    assert raised.value.status == expected_status
+    assert failed_write.call_count == expected_calls
+    assert dynamo.get(dynamo.partition(storage.workspace_id), "TEST") is None

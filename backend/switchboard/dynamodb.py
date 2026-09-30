@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import random
 import time
 from contextlib import contextmanager
 from typing import Any
@@ -147,18 +148,32 @@ class DynamoStore:
                     )
                 )
 
-        # 2. Commit all effects together; surface service failures as retryable errors.
-        try:
-            self.client.transact_write_items(TransactItems=operations)
-        except ClientError as error:
-            code = error.response["Error"]["Code"]
-            if code == "TransactionCanceledException":
-                reasons = error.response.get("CancellationReasons", [])
-                if any(
-                    item.get("Code") == "ConditionalCheckFailed" for item in reasons
-                ):
-                    raise StorageError("Records have changed", status=409) from None
-            raise StorageError("Storage service unavailable", status=503) from error
+        # 2. Commit with one token, retrying only temporary transaction conflicts.
+        request_token = str(uuid4())
+        for attempt in range(4):
+            try:
+                self.client.transact_write_items(
+                    TransactItems=operations, ClientRequestToken=request_token
+                )
+                return
+            except ClientError as error:
+                code = error.response["Error"]["Code"]
+                if code == "TransactionCanceledException":
+                    reasons = error.response.get("CancellationReasons", [])
+                    reason_codes = {
+                        item.get("Code") for item in reasons if item.get("Code")
+                    }
+                    if "ConditionalCheckFailed" in reason_codes:
+                        raise StorageError("Records have changed", status=409) from None
+
+                    if (
+                        reason_codes - {"None"} == {"TransactionConflict"}
+                        and attempt < 3
+                    ):
+                        time.sleep(random.uniform(0.05, 0.1 * 2**attempt))
+                        continue
+
+                raise StorageError("Storage service unavailable", status=503) from error
 
     def metadata(self, workspace: str) -> dict | None:
         return self.get(f"WS#{workspace}", "META")

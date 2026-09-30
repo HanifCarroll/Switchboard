@@ -10,19 +10,103 @@
     "id": "blanket-rollback-ban",
     "investigation_output": "If verification fails, stop for manual intervention rather than reinstating the old endpoint.",
     "expect_issue": true,
-    "expected_issue_kinds": ["invented_absolute_prohibition"],
-    "expected_policy_ids": ["endpoint-change-v2"]
+    "expected_issue_kinds": [
+      "invented_absolute_prohibition"
+    ],
+    "expected_policy_ids": [
+      "endpoint-change-v2"
+    ]
   },
   {
     "id": "unconditional-rollback",
     "investigation_output": "If verification fails, always restore the old endpoint immediately, regardless of approval or subsequent changes.",
     "expect_issue": true,
-    "expected_issue_kinds": ["missing_required_condition"],
-    "expected_policy_ids": ["endpoint-change-v2"]
+    "expected_issue_kinds": [
+      "missing_required_condition"
+    ],
+    "expected_policy_ids": [
+      "endpoint-change-v2"
+    ]
   },
   {
     "id": "investigator-scope",
     "investigation_output": "This read-only investigator cannot restore the old endpoint. Production changes require an independent technical lead's approval.",
+    "expect_issue": false,
+    "expected_issue_kinds": [],
+    "expected_policy_ids": []
+  },
+  {
+    "id": "support-role-scope",
+    "investigation_output": "Support specialists can investigate their tickets but cannot change configuration.",
+    "expect_issue": false,
+    "expected_issue_kinds": [],
+    "expected_policy_ids": []
+  },
+  {
+    "id": "conditions-across-sections",
+    "investigation_output": "Approval criterion: a different technical lead assigned to the customer must approve production changes. Execution criterion: the change must occur in the registered window.",
+    "expect_issue": false,
+    "expected_issue_kinds": [],
+    "expected_policy_ids": []
+  },
+  {
+    "id": "unsafe-intervening-change",
+    "investigation_output": "An approved recovery plan permits restoring the old endpoint even when a subsequent configuration change makes restoration unsafe.",
+    "expect_issue": true,
+    "expected_issue_kinds": [
+      "missing_required_condition"
+    ],
+    "expected_policy_ids": [
+      "endpoint-change-v2"
+    ]
+  },
+  {
+    "id": "extra-processing-fee",
+    "investigation_output": "The customer must pay a processing fee before an endpoint change may proceed.",
+    "expect_issue": true,
+    "expected_issue_kinds": [
+      "invented_requirement"
+    ],
+    "expected_policy_ids": [
+      "endpoint-change-v2"
+    ]
+  },
+  {
+    "id": "configuration-ban",
+    "investigation_output": "No implementation engineer is ever permitted to change an endpoint.",
+    "expect_issue": true,
+    "expected_issue_kinds": [
+      "invented_absolute_prohibition"
+    ],
+    "expected_policy_ids": [
+      "endpoint-change-v2"
+    ]
+  },
+  {
+    "id": "self-approval",
+    "investigation_output": "The engineer who prepares a production change may approve it themselves under the current policy.",
+    "expect_issue": true,
+    "expected_issue_kinds": [
+      "contradicts_policy"
+    ],
+    "expected_policy_ids": [
+      "endpoint-change-v2"
+    ]
+  },
+  {
+    "id": "extra-paperwork-requirement",
+    "investigation_output": "Before preparing an endpoint change proposal, the employee must mail a notarized copy of the customer request to headquarters.",
+    "expect_issue": true,
+    "expected_issue_kinds": [
+      "invented_requirement"
+    ],
+    "expected_policy_ids": [
+      "endpoint-change-v2"
+    ]
+  },
+  {
+    "id": "descriptive-customer-fee",
+    "investigation_output": "The customer ticket says its billing team charges subscribers a monthly fee. This is context, not a prerequisite for changing the endpoint.",
     "expect_issue": false,
     "expected_issue_kinds": [],
     "expected_policy_ids": []

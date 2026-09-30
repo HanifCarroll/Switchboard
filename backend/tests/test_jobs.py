@@ -10,6 +10,7 @@ from botocore.exceptions import ClientError
 
 from switchboard.demo.portfolio import initialize_demo_portfolio
 from switchboard.dynamodb import DynamoStore
+from switchboard.investigation.report_validation import ReportValidationError
 from switchboard.jobs import process_message, read, submit
 from switchboard.maintenance import maintain
 from switchboard.storage import StorageError, WorkspaceStorage
@@ -167,6 +168,31 @@ def test_dlq_terminal_failure_and_access_revocation(queued):
     )
     process_message(message(storage, next_job.run_id))
     assert store.get(partition, f"JOB#{next_job.run_id}")["status"] == "failed"
+
+
+def test_rejected_report_logs_the_error_type_without_model_content(
+    queued, monkeypatch, caplog
+):
+    storage, sqs, _, _ = queued
+    job = submit_job(storage, sqs)
+
+    def reject_report(**arguments):
+        raise ReportValidationError("Private model content must not reach logs")
+
+    monkeypatch.setattr(
+        "switchboard.investigation.fixtures.investigate_ticket_fixture", reject_report
+    )
+    with caplog.at_level("INFO", logger="switchboard.jobs"):
+        process_message(message(storage, job.run_id))
+
+    assert (
+        read(storage=storage, employee_id="emp-alex", run_id=job.run_id).status
+        == "failed"
+    )
+    rejected = next(r for r in caplog.records if r.message == "Investigation rejected")
+    assert rejected.error_type == "ReportValidationError"
+    assert "Private model content" not in caplog.text
+    assert not storage.list_runs(ticket_id="CHG-1042")
 
 
 def test_replaced_owner_cannot_publish(queued):

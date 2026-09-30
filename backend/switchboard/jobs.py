@@ -360,7 +360,7 @@ def process_message(message: dict, context: Any = None):
                 investigate_ticket_fixture(**arguments)
             else:
                 investigate_ticket(model=create_model(), **arguments)
-    except (PermissionError, ValueError):
+    except (PermissionError, ValueError) as error:
         fail(
             storage,
             claimed,
@@ -372,6 +372,7 @@ def process_message(message: dict, context: Any = None):
                 "run_id": identifier,
                 "stage": "failed",
                 "attempt": claimed["attempt"],
+                "error_type": type(error).__name__,
             },
         )
         return

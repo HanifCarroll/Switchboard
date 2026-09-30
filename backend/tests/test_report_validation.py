@@ -82,7 +82,7 @@ def test_clean_report_passes_without_revision():
     assert validated.validation.policy_ids == ["endpoint-change-v2"]
 
 
-def test_policy_review_disables_model_thinking():
+def test_policy_review_uses_reasoning_and_json_output():
     model = Mock(spec=ChatDeepSeek)
     validation_model = model.bind.return_value
     validation_model.invoke.return_value = AIMessage(content='{"issues": []}')
@@ -93,7 +93,11 @@ def test_policy_review_disables_model_thinking():
         model=model,
     )
 
-    model.bind.assert_called_once_with(extra_body={"thinking": {"type": "disabled"}})
+    model.bind.assert_called_once_with(
+        extra_body={"thinking": {"type": "enabled"}},
+        response_format={"type": "json_object"},
+        max_tokens=16384,
+    )
 
 
 def test_policy_issue_is_revised_once_and_rechecked():

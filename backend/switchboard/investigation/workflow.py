@@ -66,7 +66,14 @@ def investigate_request(
     )
 
     # 2. Validate the answer and keep the selected ticket authoritative.
-    investigation = InvestigationResult.model_validate_json(result["messages"][-1].text)
+    if "structured_response" in result:
+        investigation = InvestigationResult.model_validate(
+            result["structured_response"]
+        )
+    else:
+        investigation = InvestigationResult.model_validate_json(
+            result["messages"][-1].text
+        )
     if (
         investigation.ticket_id is not None
         and investigation.ticket_id != state["ticket_id"]

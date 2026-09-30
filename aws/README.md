@@ -6,14 +6,14 @@ The deployment uses three Lambda functions: a Next.js website through AWS Lambda
 
 ## Deploy
 
-Requirements: Python 3.12 for production packages, uv, Node.js 24, and an authenticated AWS CLI profile in `us-east-1`. Install dependencies in `backend/` and `frontend/`. Bedrock uses the worker execution role and the pinned `deepseek.v3.2` model in `us-east-1`. A release preserves the currently selected provider unless `--model-provider` is supplied. The direct DeepSeek provider reads its key from the environment or ignored `backend/.env`, or retains the configured worker key. Bedrock releases omit that key.
+Requirements: Python 3.12 for production packages, uv, Node.js 24, and an authenticated AWS CLI profile in `us-east-1`. Install dependencies in `backend/` and `frontend/`. The Bedrock adapter uses the worker execution role and supports `deepseek.v3.2` and `openai.gpt-6-luna` in `us-east-1`. A release preserves the currently selected provider and Bedrock model unless explicitly overridden. The direct DeepSeek provider reads its key from the environment or ignored `backend/.env`, or retains the configured worker key. Bedrock releases omit that key.
 
 From the repository root:
 
 ```sh
 uv run --project backend python scripts/aws.py provision --profile hc-studio
 uv run --project backend python scripts/aws.py build --component all --profile hc-studio
-uv run --project backend python scripts/aws.py release --component all --profile hc-studio --model-provider bedrock
+uv run --project backend python scripts/aws.py release --component all --profile hc-studio
 uv run --project backend python scripts/aws.py jobs --profile hc-studio
 uv run --project backend python scripts/aws.py delivery --profile hc-studio
 ```
@@ -38,7 +38,7 @@ The helper saves previous aliases before changing each component to ignored `aws
 
 The workflow runs backend and frontend checks, then assumes a repository-scoped role through GitHub OIDC. Set `AWS_ROLE_ARN` to the deployment role. Its trust policy matches GitHub's immutable owner/repository IDs and this repository's `main` branch. Layer access is limited to the pinned Web Adapter and OpenTelemetry layer versions. Main pushes release all functions; manual runs can select a component. Release receipts are saved as Actions artifacts, including after partial failure.
 
-Runtime roles are scoped to application resources. Function URLs require AWS IAM signing and CloudFront Origin Access Control. Only the worker can invoke the configured Bedrock model. Direct-provider credentials belong only in the worker's private environment; they are not bundled into the website or copied into GitHub secrets.
+Runtime roles are scoped to application resources. Function URLs require AWS IAM signing and CloudFront Origin Access Control. Only the worker can invoke the configured model in the default Bedrock Mantle project and standard service tier. Direct-provider credentials belong only in the worker's private environment; they are not bundled into the website or copied into GitHub secrets.
 
 ## Inspect and recover jobs
 
@@ -90,12 +90,12 @@ Policy-blocked reports complete normally and do not trigger the rejected-job met
 
 ## Tracing
 
-All Lambda versions enable active tracing. API and worker packages use a pinned OpenTelemetry layer with AWS SDK and Lambda instrumentation; the website retains its Web Adapter and native invocation tracing. The packaging receipt includes the tracing layer's uncompressed size in the Lambda limit check. Runtime roles grant only X-Ray segment/telemetry publishing; deployment can read only the two pinned layers.
+All Lambda versions enable active tracing. API and worker packages use a pinned OpenTelemetry layer with AWS SDK and Lambda instrumentation; the website retains its Web Adapter and native invocation tracing. The packaging receipt includes the tracing layer's uncompressed size in the Lambda limit check. Tracing permissions grant only X-Ray segment/telemetry publishing; deployment can read only the two pinned layers.
 
-In CloudWatch Traces, filter by `switchboard-api` or `switchboard-worker` and inspect database, queue, and Bedrock timings. Sampling means not every request has a trace. Generic HTTP instrumentation and telemetry logs/metrics exporters are disabled, and application records and prompts are not supplied as trace attributes.
+In CloudWatch Traces, filter by `switchboard-api` or `switchboard-worker` and inspect database, queue, and Bedrock timings. Sampling means not every request has a trace. Generic HTTP instrumentation and telemetry logs/metrics exporters are disabled. Model and policy stages record timings. Bedrock request spans also record the model ID and HTTP status; application records, prompts, credentials, and headers are not supplied as trace attributes. Its SDK uses a placeholder key that the signing adapter replaces with refreshed IAM credentials for each request. Requests to another host or path are rejected before signing.
 
 ## Check Bedrock access
 
-Before selecting Bedrock for the live worker, verify account access with a small real Converse request and run the live investigation scenarios. The account must be authorized for the model and have usable invocation quotas. Deterministic tests verify tool schemas, policy-review requests, and error propagation, but do not establish live model availability or quality.
+Before selecting Bedrock for the live worker, verify account access with a small real signed chat-completion request and run the live investigation scenarios. The account must be authorized for the model and have usable invocation quotas. Deterministic tests verify tool schemas, policy-review requests, and error propagation, but do not establish live model availability or quality.
 
-Select a provider explicitly with `release --component backend --model-provider bedrock` or `--model-provider deepseek`. The application does not silently switch providers on a failed call. GitHub releases retain the selected provider.
+Select a provider explicitly with `release --component backend --model-provider bedrock --bedrock-model openai.gpt-6-luna` or `--model-provider deepseek`. The application does not silently switch providers on a failed call. GitHub releases retain the selected provider.

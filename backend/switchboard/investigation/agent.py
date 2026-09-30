@@ -2,46 +2,46 @@
 
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 
-from botocore.config import Config
-from langchain.agents import AgentState, create_agent
-from langchain.agents.middleware import ToolErrorMiddleware, before_model
-from langchain_aws import ChatBedrockConverse
+from langchain.agents import create_agent
+from langchain.agents.middleware import (
+    ModelRequest,
+    ModelResponse,
+    ToolErrorMiddleware,
+    wrap_model_call,
+)
+from langchain.agents.structured_output import ToolStrategy
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_deepseek import ChatDeepSeek
-from langgraph.runtime import Runtime
+from langchain_openai import ChatOpenAI
+from opentelemetry import trace
 
+from switchboard.investigation.bedrock import create_bedrock_model
 from switchboard.investigation.deadline import require_time
 from switchboard.investigation.tools import TOOLS, InvestigationContext
 from switchboard.models import InvestigationResult
 
 MODEL = "deepseek-flash"
-BEDROCK_MODEL_ID = "deepseek.v3.2"
 
 
-@before_model
+@wrap_model_call
 def check_investigation_deadline(
-    state: AgentState, runtime: Runtime[InvestigationContext | None]
-):
+    request: ModelRequest[InvestigationContext | None],
+    handler: Callable[[ModelRequest[InvestigationContext | None]], ModelResponse],
+) -> ModelResponse:
     require_time()
-    return None
+    with trace.get_tracer(__name__).start_as_current_span(
+        "Investigation model", record_exception=False, set_status_on_exception=False
+    ):
+        return handler(request)
 
 
 def create_model():
     provider = os.getenv("SWITCHBOARD_MODEL_PROVIDER", "deepseek")
     if provider == "bedrock":
-        return ChatBedrockConverse(
-            model=BEDROCK_MODEL_ID,
-            region_name="us-east-1",
-            credentials_profile_name=os.getenv("BEDROCK_PROFILE"),
-            max_tokens=8192,
-            config=Config(
-                connect_timeout=5,
-                read_timeout=60,
-                retries={"mode": "standard", "total_max_attempts": 2},
-            ),
-        )
+        return create_bedrock_model()
     if provider != "deepseek":
         raise ValueError("SWITCHBOARD_MODEL_PROVIDER must be bedrock or deepseek")
 
@@ -57,6 +57,8 @@ def create_model():
 def policy_review_model(model: BaseChatModel):
     if isinstance(model, ChatDeepSeek):
         return model.bind(extra_body={"thinking": {"type": "disabled"}})
+    if isinstance(model, ChatOpenAI):
+        return model.bind(response_format={"type": "json_object"})
     return model
 
 
@@ -87,6 +89,9 @@ def build_agent(*, model, now: str):
             ToolErrorMiddleware(on_error=explain_unavailable_record),
         ],
         context_schema=InvestigationContext,
+        response_format=ToolStrategy(InvestigationResult)
+        if isinstance(model, ChatOpenAI)
+        else None,
         system_prompt=prompt.format(
             now=now,
             result_schema=json.dumps(InvestigationResult.model_json_schema()),

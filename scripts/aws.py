@@ -123,7 +123,7 @@ def build(component, session):
                     "from switchboard.investigation.agent import create_model; "
                     "import boto3; "
                     "[boto3.client(name) for name in ('dynamodb', 'sqs', 'xray', 'sts')]; "
-                    "assert create_model().model_id == 'deepseek.v3.2'",
+                    "assert create_model().model_name == 'deepseek.v3.2'",
                 ],
                 directory,
                 {
@@ -133,6 +133,7 @@ def build(component, session):
                     "AWS_SECRET_ACCESS_KEY": "package-check",
                     "AWS_DEFAULT_REGION": "us-east-1",
                     "SWITCHBOARD_MODEL_PROVIDER": "bedrock",
+                    "SWITCHBOARD_BEDROCK_MODEL": "deepseek.v3.2",
                 },
             )
         receipts["backend"] = package(
@@ -282,7 +283,7 @@ def outputs(session):
     }
 
 
-def release(session, component, mode="live", model_provider=None):
+def release(session, component, mode="live", model_provider=None, bedrock_model=None):
     # 1. Resolve runtime settings and preserve rollback information before changes.
     values = outputs(session)
     client = session.client("lambda")
@@ -346,6 +347,10 @@ def release(session, component, mode="live", model_provider=None):
                 "SWITCHBOARD_MODEL_PROVIDER", "deepseek"
             )
             env["SWITCHBOARD_MODEL_PROVIDER"] = provider
+            if provider == "bedrock":
+                env["SWITCHBOARD_BEDROCK_MODEL"] = bedrock_model or current_env.get(
+                    "SWITCHBOARD_BEDROCK_MODEL", "deepseek.v3.2"
+                )
             if not model_key:
                 model_key = current_env.get("DEEPSEEK_API_KEY")
             if provider == "deepseek" and not model_key:
@@ -699,6 +704,11 @@ def main():
         choices=["bedrock", "deepseek"],
         help="Worker provider (release only)",
     )
+    parser.add_argument(
+        "--bedrock-model",
+        choices=["deepseek.v3.2", "openai.gpt-6-luna"],
+        help="Bedrock worker model (release with --model-provider bedrock)",
+    )
     arguments = parser.parse_args()
     session = boto3.Session(profile_name=arguments.profile, region_name="us-east-1")
     if arguments.action == "build":
@@ -706,7 +716,14 @@ def main():
     elif arguments.action == "provision":
         provision(session, arguments.alert_email)
     elif arguments.action == "release":
-        release(session, arguments.component, model_provider=arguments.model_provider)
+        if arguments.bedrock_model and arguments.model_provider != "bedrock":
+            parser.error("--bedrock-model requires --model-provider bedrock")
+        release(
+            session,
+            arguments.component,
+            model_provider=arguments.model_provider,
+            bedrock_model=arguments.bedrock_model,
+        )
     elif arguments.action == "jobs":
         connect_jobs(session)
     elif arguments.action == "delivery":

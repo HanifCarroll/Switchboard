@@ -26,7 +26,7 @@ The company, customer data, and delivery events are synthetic. Investigations us
 - **AWS Lambda and CloudFront:** separate website, API, and investigation worker; protected origins and appropriate response caching.
 - **DynamoDB:** workspace generations, conditional business transactions, canonical proposals, immutable result chunks, and retry-safe receipts.
 - **SQS and EventBridge Scheduler:** durable submissions, native retries, worker leases, dead-letter handling, and scheduled recovery.
-- **Amazon Bedrock:** IAM-authenticated model calls through the Converse API, using the same access-controlled tools and report validation.
+- **Amazon Bedrock:** IAM-authenticated model calls through the Bedrock Mantle Chat Completions API, using the same access-controlled tools and report validation.
 - **CloudWatch and OpenTelemetry:** operational alarms, a dashboard, and sampled traces of API requests, queue delivery, database calls, and model calls.
 - **GitHub Actions:** deterministic checks, scoped OIDC deployment, immutable function versions, and independent releases.
 
@@ -44,14 +44,21 @@ Requirements: Python 3.11+, uv, Node.js 24, AWS CLI, and Docker.
 
 Open http://localhost:3000. The script starts DynamoDB Local, the Python API, and Next.js. Local records persist in the `switchboard-local-data` Docker volume. Investigations use deterministic fixtures by default, through the same authorization and persistence rules.
 
-For real investigations through Bedrock, use an authenticated AWS profile with access to `deepseek.v3.2`, then run:
+For real investigations, set `DEEPSEEK_API_KEY` in ignored `backend/.env` and run:
+
+```sh
+SWITCHBOARD_MODEL_PROVIDER=deepseek SWITCHBOARD_INVESTIGATION_MODE=live ./scripts/dev
+```
+
+The Bedrock adapter supports `deepseek.v3.2` and `openai.gpt-6-luna`. Use an authenticated AWS profile with access to the selected model:
 
 ```sh
 BEDROCK_PROFILE=hc-studio SWITCHBOARD_MODEL_PROVIDER=bedrock \
+  SWITCHBOARD_BEDROCK_MODEL=openai.gpt-6-luna \
   SWITCHBOARD_INVESTIGATION_MODE=live ./scripts/dev
 ```
 
-The `BEDROCK_PROFILE` is separate from the local database credentials. To use the direct DeepSeek provider, set `DEEPSEEK_API_KEY` in ignored `backend/.env` and select `SWITCHBOARD_MODEL_PROVIDER=deepseek`.
+The `BEDROCK_PROFILE` is separate from the local database credentials. Model access and evaluation quality must be verified before selecting a provider for a hosted release. The public demo uses the direct DeepSeek provider.
 
 For Microsoft sign-in, copy the browser values from `frontend/entra.example.env` to `frontend/.env.local` and server values from `backend/entra.example.env` to `backend/.env`. Local authentication supports both demo and Microsoft sign-in.
 
@@ -70,7 +77,7 @@ Live model evaluations are separate:
 
 ```sh
 cd backend
-uv run pytest evals/test_investigations.py -v
+uv run pytest evals/test_investigations.py evals/test_policy_faithfulness.py -v
 ```
 
 ## Repository

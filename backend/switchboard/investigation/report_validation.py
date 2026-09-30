@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 from langchain_core.language_models.chat_models import BaseChatModel
+from opentelemetry import trace
 from pydantic import ValidationError
 
 from switchboard.investigation.agent import policy_review_model
@@ -106,6 +107,9 @@ def validate_investigation_report(
     )
 
 
+@trace.get_tracer(__name__).start_as_current_span(
+    "Policy review", record_exception=False, set_status_on_exception=False
+)
 def evaluate_policy_claims(
     *,
     investigation_output: str | dict,
@@ -150,6 +154,9 @@ def evaluate_policy_claims(
     return review
 
 
+@trace.get_tracer(__name__).start_as_current_span(
+    "Report revision", record_exception=False, set_status_on_exception=False
+)
 def _revise_findings(
     *,
     draft: InvestigationResult,

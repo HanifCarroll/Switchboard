@@ -331,10 +331,16 @@ def release(session, component, mode="live", model_provider=None):
         if name == "api":
             env["INVESTIGATION_DLQ_URL"] = values["DeadLetters"]
         if name == "worker":
-            current_env = (
-                client.get_function_configuration(FunctionName=function)
-                .get("Environment", {})
-                .get("Variables", {})
+            try:
+                current_configuration = client.get_function_configuration(
+                    FunctionName=function, Qualifier="live"
+                )
+            except client.exceptions.ResourceNotFoundException:
+                current_configuration = client.get_function_configuration(
+                    FunctionName=function
+                )
+            current_env = current_configuration.get("Environment", {}).get(
+                "Variables", {}
             )
             provider = model_provider or current_env.get(
                 "SWITCHBOARD_MODEL_PROVIDER", "deepseek"

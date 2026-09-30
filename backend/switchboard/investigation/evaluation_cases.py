@@ -1,7 +1,7 @@
 """Definitions for live-model investigation evaluation cases."""
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, TypeAdapter
 
@@ -19,7 +19,7 @@ class InvestigationEvaluationCase(Record):
 
 class PolicyFaithfulnessEvaluationCase(Record):
     id: Text
-    investigation_output: Text
+    investigation_output: Text | dict[str, Any]
     expect_issue: bool
     expected_issue_kinds: list[PolicyIssueKind] = Field(default_factory=list)
     expected_policy_ids: list[Text] = Field(default_factory=list)

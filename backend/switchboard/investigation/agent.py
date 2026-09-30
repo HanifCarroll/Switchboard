@@ -58,9 +58,8 @@ def policy_review_model(model: BaseChatModel):
     if isinstance(model, ChatDeepSeek):
         return model.bind(
             extra_body={"thinking": {"type": "enabled"}},
-            response_format={"type": "json_object"},
             reasoning_effort="low",
-            max_tokens=8192,
+            max_tokens=16384,
         )
     if isinstance(model, ChatOpenAI):
         return model.bind(response_format={"type": "json_object"})

@@ -110,5 +110,318 @@
     "expect_issue": false,
     "expected_issue_kinds": [],
     "expected_policy_ids": []
+  },
+  {
+    "id": "full-proposal-report",
+    "investigation_output": {
+      "outcome": "proposal_candidate",
+      "ticket_id": "CHG-1042",
+      "proposed_endpoint": "https://events.acme.example/deals",
+      "evidence_ids": [
+        "CHG-1042",
+        "acme",
+        "int-acme-prod",
+        "endpoint-change-v2",
+        "endpoint-change-v1"
+      ],
+      "findings": {
+        "overview": "Evidence supports preparing a proposal to move Acme's production CRM sync (int-acme-prod) from https://old.acme.example/deals to https://events.acme.example/deals per ticket CHG-1042. The requester is an authorized contact and the destination is registered for production, so no blockers prevent proposal preparation.",
+        "decision_criteria": [
+          {
+            "name": "Requester authorization",
+            "status": "verified",
+            "required_before": "proposal",
+            "explanation": "Jordan Lee (contact-jordan) is listed as an authorized contact for Acme Services, the customer on the ticket.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "CHG-1042",
+              "acme"
+            ]
+          },
+          {
+            "name": "Destination registration",
+            "status": "verified",
+            "required_before": "proposal",
+            "explanation": "https://events.acme.example/deals is registered for the production environment of Acme Services.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "acme"
+            ]
+          },
+          {
+            "name": "Current configuration",
+            "status": "verified",
+            "required_before": "proposal",
+            "explanation": "Integration int-acme-prod is a production CRM sync at version 7 whose endpoint is currently https://old.acme.example/deals.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "int-acme-prod"
+            ]
+          },
+          {
+            "name": "Governing policy version",
+            "status": "verified",
+            "required_before": "proposal",
+            "explanation": "endpoint-change-v2 is the current approved policy, effective 2026-09-01. Version 1 is superseded; its rule allowing the preparing engineer to self-approve production changes no longer applies.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "endpoint-change-v2",
+              "endpoint-change-v1"
+            ]
+          },
+          {
+            "name": "Change scope preservation",
+            "status": "verified",
+            "required_before": "proposal",
+            "explanation": "Only the production endpoint is changing; the sandbox destination, credentials, subscriptions, and payload format stay as-is, consistent with the request.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "int-acme-prod",
+              "acme"
+            ]
+          },
+          {
+            "name": "Independent production approval",
+            "status": "unverified",
+            "required_before": "execution",
+            "explanation": "Production changes need approval by a different technical lead assigned to the customer. Approval records are inaccessible, so approval is unverified rather than absent; recheck before execution.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "endpoint-change-v2"
+            ]
+          },
+          {
+            "name": "Production change window",
+            "status": "deferred",
+            "required_before": "execution",
+            "explanation": "Acme's registered production window is Wednesday 00:00-23:59 UTC. Execution must occur inside it and the window and configuration rechecked at that time.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "acme"
+            ]
+          },
+          {
+            "name": "Delivery verification",
+            "status": "deferred",
+            "required_before": "verification",
+            "explanation": "After execution, confirm the approved endpoint is active and that the intended destination received a synthetic test event; a configuration update alone is not proof of delivery.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "endpoint-change-v2"
+            ]
+          }
+        ],
+        "recommendation": "Prepare a proposal for independent application validation of changing int-acme-prod to https://events.acme.example/deals. Execution must wait for a valid change window and required independent approval, with authority and configuration rechecked beforehand; delivery verification follows execution. This investigation made no changes."
+      },
+      "blockers": []
+    },
+    "expect_issue": false,
+    "expected_issue_kinds": [],
+    "expected_policy_ids": []
+  },
+  {
+    "id": "full-restricted-support-report",
+    "investigation_output": {
+      "outcome": "blocked",
+      "ticket_id": "CHG-1043",
+      "proposed_endpoint": "https://new.globex.example/deals",
+      "evidence_ids": [
+        "CHG-1043",
+        "endpoint-change-v1",
+        "endpoint-change-v2"
+      ],
+      "findings": {
+        "overview": "Ticket CHG-1043 requests moving Globex production CRM events for integration int-globex-prod to https://new.globex.example/deals, keeping other settings unchanged. The investigation is blocked because the Globex customer registry and the integration configuration could not be retrieved, so requester authorization and destination registration cannot be confirmed.",
+        "decision_criteria": [
+          {
+            "name": "Authorized requester contact",
+            "status": "unavailable",
+            "required_before": "proposal",
+            "explanation": "The Globex customer registry record could not be retrieved, so contact-sam's authority to request a production endpoint change cannot be confirmed. Ticket claims alone are insufficient.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "CHG-1043"
+            ]
+          },
+          {
+            "name": "Destination registration",
+            "status": "unavailable",
+            "required_before": "proposal",
+            "explanation": "Integration int-globex-prod could not be retrieved, so https://new.globex.example/deals cannot be confirmed as registered for Globex production. An unregistered destination blocks the change until registered separately.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "CHG-1043"
+            ]
+          },
+          {
+            "name": "Governing endpoint change policy",
+            "status": "verified",
+            "required_before": "proposal",
+            "explanation": "endpoint-change-v2 is approved and effective 2026-09-01, superseding endpoint-change-v1. Version 1 had let engineers self-approve production changes; version 2 prohibits self-approval.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "endpoint-change-v1",
+              "endpoint-change-v2"
+            ]
+          },
+          {
+            "name": "Environment (production)",
+            "status": "unverified",
+            "required_before": "proposal",
+            "explanation": "The request concerns production (int-globex-prod per the ticket), which requires independent approval and a registered change window, but the integration record was unavailable so the environment cannot be independently confirmed.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "CHG-1043"
+            ]
+          },
+          {
+            "name": "Independent approval",
+            "status": "unverified",
+            "required_before": "execution",
+            "explanation": "Approval records are inaccessible, so approval is unverified rather than absent. A different technical lead assigned to the customer must approve before execution.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": []
+          },
+          {
+            "name": "Registered change window",
+            "status": "deferred",
+            "required_before": "execution",
+            "explanation": "Production changes must occur within the customer's registered change window; the window cannot be confirmed from the unavailable integration record and must be validated before execution.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": []
+          },
+          {
+            "name": "Delivery verification",
+            "status": "deferred",
+            "required_before": "verification",
+            "explanation": "After execution the approved endpoint must be confirmed active and a synthetic test event received; a configuration update alone is not proof of delivery.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": []
+          }
+        ],
+        "recommendation": "Do not prepare a proposal yet. Resolve the two missing-evidence blockers by restoring access to the Globex customer registry and the int-globex-prod configuration; once requester authorization and destination registration are confirmed against endpoint-change-v2, a proposal for independent review could be prepared. This investigation made no changes."
+      },
+      "blockers": [
+        {
+          "kind": "missing_evidence",
+          "summary": "The Globex customer registry record could not be retrieved, so requester authorization for contact-sam is unconfirmed.",
+          "resolution": "Retrieve the Globex customer registry record and confirm that contact-sam is an authorized contact before preparing a proposal."
+        },
+        {
+          "kind": "missing_evidence",
+          "summary": "The int-globex-prod integration configuration could not be retrieved, so destination registration for https://new.globex.example/deals is unconfirmed.",
+          "resolution": "Retrieve the current int-globex-prod configuration and confirm the endpoint is registered for this customer and environment before preparing a proposal."
+        }
+      ]
+    },
+    "expect_issue": false,
+    "expected_issue_kinds": [],
+    "expected_policy_ids": []
+  },
+  {
+    "id": "full-unauthorized-contact-report",
+    "investigation_output": {
+      "outcome": "blocked",
+      "ticket_id": "CHG-1044",
+      "proposed_endpoint": "https://events.acme.example/billing",
+      "evidence_ids": [
+        "CHG-1044",
+        "acme",
+        "int-acme-billing-prod",
+        "endpoint-change-v1",
+        "endpoint-change-v2"
+      ],
+      "findings": {
+        "overview": "The requested production change for Acme's Billing events integration, moving the endpoint from https://old.acme.example/billing to https://events.acme.example/billing, cannot be prepared as a proposal because the requester is not an authorized contact. The destination itself is registered for production.",
+        "decision_criteria": [
+          {
+            "name": "Requester authorization",
+            "status": "failed",
+            "required_before": "proposal",
+            "explanation": "Ticket CHG-1044 names contact-taylor (Taylor Reed), but Acme's registry lists only contact-jordan (Jordan Lee) as an authorized contact. The ticket's statement of authority is a claim, not proof.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "CHG-1044",
+              "acme"
+            ]
+          },
+          {
+            "name": "Destination registration",
+            "status": "verified",
+            "required_before": "proposal",
+            "explanation": "https://events.acme.example/billing is listed as a registered production destination for Acme.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "acme"
+            ]
+          },
+          {
+            "name": "Customer and environment match",
+            "status": "verified",
+            "required_before": "proposal",
+            "explanation": "Integration int-acme-billing-prod belongs to customer acme and runs in production, and its current endpoint is the old billing URL named in the ticket.",
+            "policy_id": null,
+            "evidence_ids": [
+              "int-acme-billing-prod",
+              "acme",
+              "CHG-1044"
+            ]
+          },
+          {
+            "name": "Current policy version",
+            "status": "verified",
+            "required_before": "proposal",
+            "explanation": "endpoint-change-v2 (approved, effective 2026-09-01) governs. endpoint-change-v1 was superseded on 2026-09-01, so its allowance for engineers to self-approve production changes no longer applies.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "endpoint-change-v2",
+              "endpoint-change-v1"
+            ]
+          },
+          {
+            "name": "Independent production approval",
+            "status": "deferred",
+            "required_before": "execution",
+            "explanation": "v2 requires approval by a different technical lead assigned to Acme, covering the exact integration, current configuration, proposed endpoint, and recovery plan. Approval records are inaccessible, so approval is unverified rather than absent.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "endpoint-change-v2"
+            ]
+          },
+          {
+            "name": "Change window",
+            "status": "deferred",
+            "required_before": "execution",
+            "explanation": "Production changes must occur within Acme's registered window (Wednesday 00:00-23:59 UTC); this must be rechecked at execution.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "acme",
+              "endpoint-change-v2"
+            ]
+          },
+          {
+            "name": "Post-change verification",
+            "status": "deferred",
+            "required_before": "verification",
+            "explanation": "The approved endpoint must be confirmed active and a synthetic test event received; a configuration update alone is not proof. If verification fails, restore the old endpoint only if the approved plan permits it and restoration is safe.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "endpoint-change-v2"
+            ]
+          }
+        ],
+        "recommendation": "Do not prepare a proposal yet. Resolve the confirmed authorization problem by obtaining the request from an authorized Acme contact, such as contact-jordan, or having the customer registry updated to include Taylor Reed. If the requester is authorized, a proposal could then be prepared, but production execution would still require independent technical-lead approval, an open registered change window, and configuration/permission rechecks; delivery verification follows execution. This investigation made no changes."
+      },
+      "blockers": [
+        {
+          "kind": "confirmed_violation",
+          "summary": "The requester, contact-taylor (Taylor Reed), is not listed among Acme's authorized contacts; only contact-jordan (Jordan Lee) is authorized, so the change request lacks an authorized customer contact.",
+          "resolution": "Obtain the request from an authorized Acme contact (contact-jordan) or have the customer registry updated to authorize Taylor Reed, then re-investigate."
+        }
+      ]
+    },
+    "expect_issue": false,
+    "expected_issue_kinds": [],
+    "expected_policy_ids": []
   }
 ]

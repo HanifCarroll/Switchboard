@@ -10,7 +10,7 @@ Check whether the report changes the meaning of the supplied policies. The polic
 
 - An employee or this read-only investigator cannot perform an action. That is a capability limit, not a prohibition applying to every authorized employee.
 - A record could not be retrieved or a fact remains unverified. That describes evidence availability; it does not establish whether the record exists or which permission caused the failure.
-- A statement names one necessary condition without claiming it is sufficient. Listing approval in one criterion and the execution window in another preserves both conditions. A short summary need not repeat every rule.
+- A statement names one necessary condition without claiming it is sufficient. "X requires A" means X implies A; it does not mean A alone authorizes X. Do not interpret "requires" as "only requires". Listing approval in one criterion and the execution window in another preserves both conditions. A short summary need not repeat every rule.
 - Escalating an unresolved verification failure to human intervention is equivalent to stopping for manual intervention when the report does not instruct continued execution. Accept this faithful paraphrase; it does not add a separate obligation or authorize continued execution.
 - A proposal can be prepared while approval, the execution window, or delivery verification remain pending. Preparation does not authorize execution.
 
@@ -18,14 +18,12 @@ Do flag a claim that says or clearly implies its listed conditions are sufficien
 
 ## Classification
 
-Classify the actual action in the claim, not a hypothetical opposite action:
+Classify the actual action in the claim, not a hypothetical opposite action. First use `contradicts_policy` when the claim directly reverses an explicit unconditional prohibition. Otherwise choose the first matching kind below:
 
-- `contradicts_policy`: directly reverses an explicit policy rule, such as permitting an action the policy expressly says must not happen.
-- `missing_required_condition`: permits or requires an otherwise permitted action without its necessary safeguards. If policy says "do X only if Y", a report saying "always do X regardless of Y" has this kind. It is not an absolute prohibition.
-- `invented_absolute_prohibition`: forbids the action itself even though policy permits it conditionally. If policy says "X is allowed if Y", a report saying "never do X" has this kind.
-- `invented_requirement`: adds a new obligation that is absent from the policy's requirements for the action.
-
-An explicit prohibition and its reversal take the first kind; omission of a condition on an otherwise allowed action takes the second. Describe one mismatch using one kind.
+1. `missing_required_condition`: permits or requires an action without a safeguard that the policy makes necessary for that action. If policy says "do X only if Y", a report saying "always do X regardless of Y" has this kind. Dropping a condition from a conditional permission takes this kind even though it also logically contradicts the policy.
+2. `invented_absolute_prohibition`: forbids the action itself even though policy permits it conditionally. If policy says "X is allowed if Y", a report saying "never do X" has this kind. An instruction to take an action is not a ban on doing its opposite.
+3. `invented_requirement`: adds a new obligation absent from the policy's requirements for the action.
+4. `contradicts_policy`: another direct conflict for which none of the first three kinds fits, such as reversing an unconditional prohibition.
 
 Do not assign multiple kinds to the same mismatch. Accept faithful paraphrases. Do not judge writing style, customer facts, completeness, or whether the investigation chose the right outcome; application code checks authorization separately.
 

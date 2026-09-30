@@ -14,6 +14,7 @@ from switchboard.workflow_status import WorkflowStatus, get_workflow_status
 
 
 class InvestigationRun(BaseModel):
+    status: Literal["completed"] = "completed"
     run_id: UUID
     ticket_id: str
     scenario_id: str | None = None
@@ -25,7 +26,7 @@ class InvestigationSummary(BaseModel):
     run_id: UUID
     ticket_id: str
     scenario_id: str | None = None
-    outcome: Literal["proposal_candidate", "blocked"]
+    outcome: Literal["proposal_candidate", "blocked", "queued", "running", "failed"]
 
 
 def find_proposal_run_id(*, storage: WorkspaceStorage, proposal_id: str) -> UUID | None:

@@ -7,8 +7,8 @@ from switchboard.investigation.fixtures import investigate_ticket_fixture
 from switchboard.storage import WorkspaceStorage
 
 
-def test_new_visitors_receive_isolated_baseline_workspaces(storage_bridge):
-    base = storage_bridge.storage(workspace_id="unused")
+def test_new_visitors_receive_isolated_baseline_workspaces(memory_store):
+    base = memory_store.storage(workspace_id="unused")
 
     first = open_demo_workspace(workspace_id=None, base_storage=base)
     second = open_demo_workspace(workspace_id=None, base_storage=base)
@@ -22,8 +22,8 @@ def test_new_visitors_receive_isolated_baseline_workspaces(storage_bridge):
     assert second_workspace["updatedAt"] != "2026-09-20T00:00:00+00:00"
 
 
-def test_new_demo_workspace_contains_five_independent_requests(storage_bridge):
-    base = storage_bridge.storage(workspace_id="unused")
+def test_new_demo_workspace_contains_five_independent_requests(memory_store):
+    base = memory_store.storage(workspace_id="unused")
     opened = open_demo_workspace(workspace_id=None, base_storage=base)
 
     tickets = opened.workspace.storage.list_tickets()
@@ -45,8 +45,8 @@ def test_new_demo_workspace_contains_five_independent_requests(storage_bridge):
     )
 
 
-def test_known_workspace_reopens_without_resetting_records(storage_bridge):
-    base = storage_bridge.storage(workspace_id="unused")
+def test_known_workspace_reopens_without_resetting_records(memory_store):
+    base = memory_store.storage(workspace_id="unused")
     created = open_demo_workspace(workspace_id=None, base_storage=base)
 
     reopened = open_demo_workspace(
@@ -59,18 +59,17 @@ def test_known_workspace_reopens_without_resetting_records(storage_bridge):
     assert reopened.workspace.storage.get_ticket(ticket_id="CHG-1042") is not None
 
 
-def test_failed_portfolio_seed_removes_the_partial_workspace(storage_bridge):
+def test_failed_portfolio_seed_removes_the_partial_workspace(memory_store):
     operations: list[tuple[str, str]] = []
 
     def fail_during_seed(operation: str, workspace_id: str, payload: dict):
         operations.append((operation, workspace_id))
         if operation == "proposal.save":
             raise RuntimeError("seed failed")
-        return storage_bridge.handle(operation, workspace_id, payload)
+        return memory_store.handle(operation, workspace_id, payload)
 
     base = WorkspaceStorage(
         workspace_id="unused",
-        bridge_url="memory://storage",
         transport=fail_during_seed,
     )
 
@@ -84,13 +83,12 @@ def test_failed_portfolio_seed_removes_the_partial_workspace(storage_bridge):
     )
     assert operations[-1] == ("workspace.delete", created_workspace_id)
     assert (
-        storage_bridge.storage(workspace_id=created_workspace_id).get_workspace()
-        is None
+        memory_store.storage(workspace_id=created_workspace_id).get_workspace() is None
     )
 
 
-def test_unsafe_request_has_an_immediate_blocked_fixture_result(storage_bridge):
-    base = storage_bridge.storage(workspace_id="unused")
+def test_unsafe_request_has_an_immediate_blocked_fixture_result(memory_store):
+    base = memory_store.storage(workspace_id="unused")
     storage = open_demo_workspace(
         workspace_id=None, base_storage=base
     ).workspace.storage
@@ -107,8 +105,8 @@ def test_unsafe_request_has_an_immediate_blocked_fixture_result(storage_bridge):
     assert result.result.proposal is None
 
 
-def test_unauthorized_requester_is_blocked_without_a_proposal(storage_bridge):
-    base = storage_bridge.storage(workspace_id="unused")
+def test_unauthorized_requester_is_blocked_without_a_proposal(memory_store):
+    base = memory_store.storage(workspace_id="unused")
     storage = open_demo_workspace(
         workspace_id=None, base_storage=base
     ).workspace.storage

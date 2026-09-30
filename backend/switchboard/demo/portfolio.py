@@ -36,11 +36,12 @@ def initialize_demo_portfolio(*, storage: WorkspaceStorage) -> None:
     _open_current_change_window(payload=payload)
 
     try:
-        storage.reset_workspace(payload=payload)
-        _seed_proposal(storage=storage, ticket_id="CHG-1045", approve=False)
-        _seed_proposal(storage=storage, ticket_id="CHG-1046", approve=True)
+        with storage.initialization():
+            storage.reset_workspace(payload=payload)
+            _seed_proposal(storage=storage, ticket_id="CHG-1045", approve=False)
+            _seed_proposal(storage=storage, ticket_id="CHG-1046", approve=True)
     except Exception:
-        storage.delete_workspace()
+        storage.discard_failed_initialization()
         raise
 
 

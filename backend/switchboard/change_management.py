@@ -25,7 +25,7 @@ from switchboard.storage import StorageError
 
 
 def _from_storage(model, record: dict):
-    """Validate JSON-shaped D1 values, including ISO datetime strings."""
+    """Validate JSON-shaped stored values, including ISO datetime strings."""
     return model.model_validate_json(json.dumps(record))
 
 
@@ -52,7 +52,7 @@ def save_proposal(
     proposal = Proposal.model_validate_json(proposal.model_dump_json())
     ensure_proposal_matches_current_records(proposal=proposal, session=session)
 
-    # 2. Let D1 enforce one proposal for the same business snapshot.
+    # 2. Let DynamoDB enforce one proposal for the same business snapshot.
     saved = session.storage.save_proposal(proposal=proposal.model_dump(mode="json"))
     return SaveProposalResult(
         proposal=_from_storage(Proposal, saved["proposal"]),
@@ -106,7 +106,7 @@ def approve_proposal(*, proposal_id: str, session: EmployeeSession) -> Approval:
     proposal = get_proposal(session=session, proposal_id=proposal_id)
     require_independent_proposal_reviewer(proposal=proposal, session=session)
 
-    # 2. Let D1 enforce one approval per proposal.
+    # 2. Let DynamoDB enforce one approval per proposal.
     approval = Approval(
         id=str(uuid4()),
         proposal_id=proposal.id,
@@ -199,7 +199,7 @@ def execute_proposal(
         )
         approval_id = approval.id
 
-    # 3. Ask D1 to change the configuration and save its receipt atomically.
+    # 3. Ask DynamoDB to change the configuration and save its receipt atomically.
     execution = Execution(
         id=str(uuid4()),
         proposal_id=proposal.id,

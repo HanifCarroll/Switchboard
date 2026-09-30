@@ -67,7 +67,7 @@ def test_successful_tool_results_become_exact_evidence_snapshots(storage):
 
 
 def test_saved_evidence_preserves_the_snapshot_when_the_current_record_changes(
-    storage, storage_bridge
+    storage, memory_store
 ):
     session = EmployeeSession(storage=storage, employee_id="emp-alex")
     integration = session.storage.get_integration(integration_id="int-acme-prod")
@@ -163,5 +163,5 @@ def test_saved_evidence_preserves_the_snapshot_when_the_current_record_changes(
             run_id=run_id,
             evidence_id="int-acme-prod",
             employee_id="emp-alex",
-            storage=storage_bridge.storage(workspace_id="workspace-two"),
+            storage=memory_store.storage(workspace_id="workspace-two"),
         )

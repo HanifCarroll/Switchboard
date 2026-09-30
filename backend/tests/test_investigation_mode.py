@@ -12,7 +12,7 @@ def test_live_mode_is_the_safe_default(monkeypatch):
 
 def test_fixture_mode_requires_local_runtime(monkeypatch):
     monkeypatch.setenv("SWITCHBOARD_INVESTIGATION_MODE", "fixture")
-    monkeypatch.setenv("SWITCHBOARD_RUNTIME", "cloudflare")
+    monkeypatch.setenv("SWITCHBOARD_RUNTIME", "aws")
 
     with pytest.raises(ValueError, match="only in local development"):
         get_investigation_mode()

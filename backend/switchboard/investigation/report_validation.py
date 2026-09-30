@@ -8,6 +8,7 @@ from typing import Literal
 from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import ValidationError
 
+from switchboard.investigation.deadline import require_time
 from switchboard.models import (
     InvestigationFindings,
     InvestigationResult,
@@ -110,6 +111,7 @@ def evaluate_policy_claims(
     policies: list[PolicySource],
     model: BaseChatModel,
 ) -> PolicyReview:
+    require_time()
     prompt = (Path(__file__).parent / "prompts" / "policy_evaluation.md").read_text()
     response = model.bind(extra_body={"thinking": {"type": "disabled"}}).invoke(
         [
@@ -154,6 +156,7 @@ def _revise_findings(
     policies: list[PolicySource],
     model: BaseChatModel,
 ) -> InvestigationFindings:
+    require_time()
     prompt = (Path(__file__).parent / "prompts" / "report_revision.md").read_text()
     response = model.bind(extra_body={"thinking": {"type": "disabled"}}).invoke(
         [

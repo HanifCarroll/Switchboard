@@ -1,4 +1,4 @@
-"""Create isolated D1 workspaces for anonymous demo visitors."""
+"""Create isolated workspaces for anonymous demo visitors."""
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -38,7 +38,8 @@ def open_demo_workspace(
                     workspace=DemoWorkspace(id=workspace_id, storage=storage),
                     was_created=False,
                 )
-            storage.delete_workspace()
+            if not existing.get("import_hash"):
+                storage.delete_workspace()
 
     new_id = uuid4()
     storage = base_storage.for_workspace(workspace_id=str(new_id))

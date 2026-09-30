@@ -6,8 +6,8 @@ __pycache__/
 .pytest_cache/
 
 .env
-cloudflare/.dev.vars
-cloudflare/.wrangler/
 backend/data/local/
 
-cloudflare/node_modules/
+.aws-build/
+.aws-build-requirements.txt
+aws/local/

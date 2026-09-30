@@ -39,7 +39,15 @@ export function InvestigationHistory({
             onClick={() => onOpenRun(item.run_id)}
           >
             <span className="block font-medium capitalize">
-              {item.outcome === "blocked" ? "Investigation blocked" : "Proposal prepared"}
+              {(
+                {
+                  blocked: "Investigation blocked",
+                  proposal_candidate: "Proposal prepared",
+                  queued: "Investigation queued",
+                  running: "Investigation running",
+                  failed: "Investigation failed",
+                } as Record<string, string>
+              )[item.outcome] ?? item.outcome}
             </span>
             <span className="mt-1 block font-mono text-xs text-muted-foreground">
               Run {item.run_id.slice(0, 8)}
@@ -48,7 +56,7 @@ export function InvestigationHistory({
         ))}
         {!history.length && (
           <p className="text-sm leading-6 text-muted-foreground">
-            No completed investigations for this request yet.
+            No investigations for this request yet.
           </p>
         )}
       </div>

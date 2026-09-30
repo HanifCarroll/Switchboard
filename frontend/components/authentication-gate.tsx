@@ -47,6 +47,12 @@ export function AuthenticationGate({
     refetchOnWindowFocus: false,
     queryFn: async (): Promise<AuthenticatedSession | null> => {
       if (sessionMode === "demo") {
+        if (process.env.NEXT_PUBLIC_AWS_DEPLOYMENT === "1") {
+          await requestApi<CurrentEmployee>({
+            path: "/api/me",
+            identity: { mode: "demo", employeeId: "emp-alex" },
+          });
+        }
         return { identity: { mode: "demo", employeeId: "emp-alex" }, employee: null };
       }
 

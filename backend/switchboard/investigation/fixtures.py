@@ -1,7 +1,7 @@
 """Deterministic local investigation responses using authorized business records."""
 
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from pydantic import HttpUrl
 
@@ -33,6 +33,7 @@ def investigate_ticket_fixture(
     employee_id: str,
     storage: WorkspaceStorage,
     now: datetime,
+    run_id: UUID | None = None,
 ) -> InvestigationRunResult:
     """Create an immediate fixture result through real access and persistence rules."""
     if now.utcoffset() is None:
@@ -133,7 +134,7 @@ def investigate_ticket_fixture(
         proposal=proposal,
         was_created=was_created,
     )
-    workflow_id = uuid4()
+    workflow_id = run_id or uuid4()
     save_investigation_run(
         storage=storage,
         run_id=workflow_id,

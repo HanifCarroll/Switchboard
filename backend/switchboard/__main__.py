@@ -1,4 +1,4 @@
-"""Investigate, review, or reset the local D1-backed Switchboard demo."""
+"""Investigate, review, or reset the local DynamoDB-backed Switchboard demo."""
 
 import argparse
 import json

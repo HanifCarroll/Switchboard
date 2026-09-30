@@ -1,12 +1,9 @@
-"""Named access to one workspace in the private D1 bridge."""
+"""Named DynamoDB operations for one isolated workspace."""
 
-import json
-import os
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 StorageTransport = Callable[[str, str, dict], Any]
 
@@ -22,23 +19,30 @@ class WorkspaceStorage:
     """Call explicit domain operations for one isolated workspace."""
 
     workspace_id: str
-    bridge_url: str
-    bridge_token: str | None = None
-    transport: StorageTransport | None = None
+    transport: StorageTransport
 
     @classmethod
     def from_environment(cls, *, workspace_id: str) -> "WorkspaceStorage":
-        return cls(
-            workspace_id=workspace_id,
-            bridge_url=os.getenv("STORAGE_BRIDGE_URL", "http://127.0.0.1:8787"),
-            bridge_token=os.getenv("LOCAL_STORAGE_BRIDGE_TOKEN"),
-        )
+        from switchboard.dynamodb import DynamoStore
+
+        return cls(workspace_id=workspace_id, transport=DynamoStore())
+
+    def initialization(self):
+        from switchboard.dynamodb import DynamoStore
+
+        if isinstance(self.transport, DynamoStore):
+            return self.transport.initialize(self.workspace_id)
+        return nullcontext()
+
+    def discard_failed_initialization(self) -> None:
+        from switchboard.dynamodb import DynamoStore
+
+        if not isinstance(self.transport, DynamoStore):
+            self.delete_workspace()
 
     def for_workspace(self, *, workspace_id: str) -> "WorkspaceStorage":
         return WorkspaceStorage(
             workspace_id=workspace_id,
-            bridge_url=self.bridge_url,
-            bridge_token=self.bridge_token,
             transport=self.transport,
         )
 
@@ -140,30 +144,4 @@ class WorkspaceStorage:
         return self._call("run.findProposal", {"proposalId": proposal_id})
 
     def _call(self, operation: str, payload: dict | None = None):
-        if self.transport is not None:
-            return self.transport(operation, self.workspace_id, payload or {})
-
-        content = json.dumps(
-            {
-                "operation": operation,
-                "workspaceId": self.workspace_id,
-                "payload": payload or {},
-            }
-        ).encode()
-        headers = {"Content-Type": "application/json"}
-        if self.bridge_token:
-            headers["Authorization"] = f"Bearer {self.bridge_token}"
-        request = Request(self.bridge_url, data=content, headers=headers, method="POST")
-
-        try:
-            with urlopen(request, timeout=10) as response:
-                body = json.load(response)
-        except HTTPError as error:
-            body = json.loads(error.read())
-            raise StorageError(
-                body.get("error", "Storage request failed"), status=error.code
-            ) from None
-        except (URLError, TimeoutError):
-            raise StorageError("Storage service unavailable", status=503) from None
-
-        return body["data"]
+        return self.transport(operation, self.workspace_id, payload or {})

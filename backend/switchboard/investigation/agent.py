@@ -3,14 +3,24 @@
 import json
 from pathlib import Path
 
-from langchain.agents import create_agent
-from langchain.agents.middleware import ToolErrorMiddleware
+from langchain.agents import AgentState, create_agent
+from langchain.agents.middleware import ToolErrorMiddleware, before_model
 from langchain_deepseek import ChatDeepSeek
+from langgraph.runtime import Runtime
 
+from switchboard.investigation.deadline import require_time
 from switchboard.investigation.tools import TOOLS, InvestigationContext
 from switchboard.models import InvestigationResult
 
 MODEL = "deepseek-flash"
+
+
+@before_model
+def check_investigation_deadline(
+    state: AgentState, runtime: Runtime[InvestigationContext | None]
+):
+    require_time()
+    return None
 
 
 def create_model():
@@ -45,7 +55,10 @@ def build_agent(*, model, now: str):
     return create_agent(
         model=model,
         tools=TOOLS,
-        middleware=[ToolErrorMiddleware(on_error=explain_unavailable_record)],
+        middleware=[
+            check_investigation_deadline,
+            ToolErrorMiddleware(on_error=explain_unavailable_record),
+        ],
         context_schema=InvestigationContext,
         system_prompt=prompt.format(
             now=now,

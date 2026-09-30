@@ -15,7 +15,6 @@ def test_client_sends_only_named_operation_and_workspace():
 
     storage = WorkspaceStorage(
         workspace_id="workspace-one",
-        bridge_url="memory://storage",
         transport=transport,
     )
 
@@ -23,9 +22,9 @@ def test_client_sends_only_named_operation_and_workspace():
     assert calls == [("ticket.get", "workspace-one", {"id": "CHG-1042"})]
 
 
-def test_workspaces_cannot_read_each_others_records(storage_bridge):
-    first = storage_bridge.storage(workspace_id="first")
-    second = storage_bridge.storage(workspace_id="second")
+def test_workspaces_cannot_read_each_others_records(memory_store):
+    first = memory_store.storage(workspace_id="first")
+    second = memory_store.storage(workspace_id="second")
     payload = build_workspace_payload(
         scenario_id="baseline",
         selected_scenario=load_scenarios()["baseline"],

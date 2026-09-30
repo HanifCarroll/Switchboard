@@ -24,7 +24,9 @@ import {
   investigationEvidenceQuery,
   investigationQuery,
   investigationKeys,
-  type InvestigationRun,
+  type InvestigationResponse,
+  investigationRequestKey,
+  rememberSubmission,
   requestApi,
   ticketsQuery,
   proposalReviewKeys,
@@ -51,9 +53,6 @@ export function WorkspaceRoute({ route }: { route: WorkspaceRouteDescriptor }) {
   const employee = identity.mode === "demo" ? identity.employeeId : currentEmployee!.employee_id;
   const queryClient = useQueryClient();
   const selectedTicketId = route.kind === "request" ? route.ticketId : null;
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(
-    route.kind === "request" ? (route.runId ?? null) : null,
-  );
   const activeView = route.kind === "approvals" ? "approvals" : "work";
   const [ticketSearch, setTicketSearch] = useState("");
   const [ticketFilter, setTicketFilter] = useState<"all" | "needs_attention">("all");
@@ -70,6 +69,11 @@ export function WorkspaceRoute({ route }: { route: WorkspaceRouteDescriptor }) {
   });
   const mutationsInProgress = useIsMutating();
   const historyQueryResult = useQuery(historyQuery(identity, selectedTicketId));
+  const selectedRunId =
+    (route.kind === "request" ? route.runId : null) ??
+    historyQueryResult.data?.find((item) => item.outcome === "queued" || item.outcome === "running")
+      ?.run_id ??
+    null;
   const selectedRun = useQuery(investigationQuery(identity, selectedRunId));
   const evidenceQueryResult = useQuery({
     ...investigationEvidenceQuery(
@@ -99,7 +103,10 @@ export function WorkspaceRoute({ route }: { route: WorkspaceRouteDescriptor }) {
   const needsAttentionCount = tickets.filter((ticket) => ticket.needs_attention).length;
   const selectedTicket = tickets.find((ticket) => ticket.id === selectedTicketId) ?? null;
   const history = historyQueryResult.data ?? [];
-  const run = selectedRun.isError ? null : (selectedRun.data ?? null);
+  const response = selectedRun.isError ? null : selectedRun.data;
+  const run = response && "result" in response ? response : null;
+  const job = response && !("result" in response) ? response : null;
+  const jobActive = job?.status === "queued" || job?.status === "running";
   const employeeRecord = personas.find((item) => item.id === employee);
   const employeeName = employeeRecord?.name ?? currentEmployee?.name ?? employee;
   const employeeRole = employeeRecord?.role ?? currentEmployee?.role ?? null;
@@ -115,54 +122,52 @@ export function WorkspaceRoute({ route }: { route: WorkspaceRouteDescriptor }) {
   // 2. Mutations run only on explicit user actions and never retry paid calls.
   const investigation = useMutation({
     mutationFn: (ticketId: string) =>
-      requestApi<InvestigationRun>({
+      requestApi<InvestigationResponse>({
         path: "/api/investigations",
         identity,
         options: {
           method: "POST",
-          body: JSON.stringify({ ticket_id: ticketId }),
+          body: JSON.stringify({
+            ticket_id: ticketId,
+            idempotency_key: investigationRequestKey(identity, ticketId),
+          }),
         },
       }),
     onSuccess: (savedRun) => {
       queryClient.setQueryData(investigationKeys.run(identity, savedRun.run_id), savedRun);
-      router.replace(requestPath(savedRun.ticket_id));
-      setSelectedRunId(savedRun.run_id);
+      rememberSubmission(identity, savedRun);
+      router.replace(requestPath(savedRun.ticket_id, savedRun.run_id));
     },
     onSettled: (_data, _error, ticketId) =>
       queryClient.invalidateQueries({ queryKey: investigationKeys.history(identity, ticketId) }),
   });
   function startTicketInvestigation(ticketId: string) {
-    setSelectedRunId(null);
     investigation.mutate(ticketId);
   }
 
   function selectTicket(ticketId: string) {
     investigation.reset();
-    setSelectedRunId(null);
     router.push(requestPath(ticketId));
   }
 
   function changePersona(personaId: string) {
-    setSelectedRunId(null);
     investigation.reset();
     onEmployeeChange(personaId);
     router.push(workspacePaths.work);
   }
 
   function clearSelection() {
-    setSelectedRunId(null);
     router.push(workspacePaths.work);
   }
 
   function openApprovals() {
-    setSelectedRunId(null);
     investigation.reset();
     router.push(workspacePaths.approvals);
   }
 
   function openRun(id: string) {
     investigation.reset();
-    setSelectedRunId(id);
+    if (selectedTicketId) router.replace(requestPath(selectedTicketId, id));
   }
 
   function refreshHistory() {
@@ -172,11 +177,15 @@ export function WorkspaceRoute({ route }: { route: WorkspaceRouteDescriptor }) {
   // 3. Derive presentation from query and mutation state, rather than copying it.
   const pendingMessage = investigation.isPending
     ? "Investigating records and validating the result…"
-    : reconnecting
-      ? "Reconnecting to the service…"
-      : selectedRun.isLoading
-        ? "Loading saved investigation…"
-        : "";
+    : jobActive
+      ? job.status === "queued"
+        ? "Investigation queued. You can leave this page and return later."
+        : "Investigating records. Temporary failures retry automatically; recovery can take up to 30 minutes."
+      : reconnecting
+        ? "Reconnecting to the service…"
+        : selectedRun.isLoading
+          ? "Loading saved investigation…"
+          : "";
   const isPending = pendingMessage !== "";
   const operationError = investigation.error?.message;
   const evidenceError = evidenceQueryResult.error?.message;
@@ -187,7 +196,7 @@ export function WorkspaceRoute({ route }: { route: WorkspaceRouteDescriptor }) {
     personasQuery.error ??
     historyQueryResult.error
   )?.message;
-  const error = operationError ?? readError;
+  const error = operationError ?? readError ?? job?.error;
 
   function retryWorkspaceReads() {
     void queryClient.refetchQueries({ type: "active" });
@@ -385,7 +394,7 @@ export function WorkspaceRoute({ route }: { route: WorkspaceRouteDescriptor }) {
             <WorkflowProgress
               hasInvestigation={run !== null}
               hasProposal={run?.result.proposal !== null && run?.result.proposal !== undefined}
-              investigationInProgress={investigation.isPending}
+              investigationInProgress={investigation.isPending || jobActive}
               status={run?.current_status ?? null}
             />
 
@@ -401,7 +410,7 @@ export function WorkspaceRoute({ route }: { route: WorkspaceRouteDescriptor }) {
               <div className="min-w-0">
                 <TicketDetail
                   ticket={selectedTicket}
-                  busy={investigation.isPending}
+                  busy={investigation.isPending || jobActive}
                   onInvestigate={startTicketInvestigation}
                 />
                 {run && (
@@ -439,12 +448,14 @@ export function WorkspaceRoute({ route }: { route: WorkspaceRouteDescriptor }) {
                     )}
                     <div>
                       <p className="font-medium">
-                        {investigation.isPending
+                        {investigation.isPending || jobActive
                           ? "Investigation in progress"
-                          : (run?.current_status.title ?? "Ready to investigate")}
+                          : job?.status === "failed"
+                            ? "Investigation failed"
+                            : (run?.current_status.title ?? "Ready to investigate")}
                       </p>
                       <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                        {investigation.isPending
+                        {investigation.isPending || jobActive
                           ? "Reviewing records and validating the report."
                           : (run?.current_status.next_action ??
                             "Run an investigation to gather evidence and determine the next action.")}

@@ -11,6 +11,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
 
 from switchboard.change_management import save_proposal
+from switchboard.dynamodb import DynamoStore
 from switchboard.integrations.policy_library import list_policies
 from switchboard.investigation.evidence import capture_investigation_evidence
 from switchboard.investigation.report_validation import (
@@ -117,6 +118,20 @@ def validate_report(
         for policy in policies
         if policy.id not in captured_ids
     )
+    storage = runtime.context.investigation_context.storage
+    if isinstance(storage.transport, DynamoStore):
+        accepted = EndpointChangeResult.model_validate(
+            {
+                "source": "model",
+                "investigation": validated.investigation,
+                "report_validation": validated.validation,
+                "evidence": evidence,
+                "messages": state.get("messages", []),
+            }
+        )
+        storage.transport.save_checkpoint(
+            storage.workspace_id, accepted.model_dump(mode="json")
+        )
     return {
         "investigation": validated.investigation,
         "report_validation": validated.validation,

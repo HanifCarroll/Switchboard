@@ -3,6 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "standalone",
   async rewrites() {
+    if (process.env.SWITCHBOARD_AWS === "1") return [];
     return [
       {
         source: "/api/:path*",

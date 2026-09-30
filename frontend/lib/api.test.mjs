@@ -328,3 +328,36 @@ test("Entra history is account-scoped and cannot reuse demo data", async (t) => 
     historyQuery({ mode: "demo", employeeId: "alex" }, "CHG-1042").queryKey,
   );
 });
+
+test("queued run polling stops after completion or failure", () => {
+  const query = investigationQuery({ mode: "demo", employeeId: "emp-alex" }, "run-1");
+  assert.equal(query.refetchInterval({ state: { data: { status: "queued" } } }), 2000);
+  assert.equal(query.refetchInterval({ state: { data: { status: "running" } } }), 2000);
+  assert.equal(query.refetchInterval({ state: { data: { status: "failed" } } }), false);
+  assert.equal(query.refetchInterval({ state: { data: { result: {} } } }), false);
+});
+
+test("AWS writes hash the exact body and keep application identity separate", async (t) => {
+  const previous = process.env.NEXT_PUBLIC_AWS_DEPLOYMENT;
+  process.env.NEXT_PUBLIC_AWS_DEPLOYMENT = "1";
+  t.after(() =>
+    previous === undefined
+      ? delete process.env.NEXT_PUBLIC_AWS_DEPLOYMENT
+      : (process.env.NEXT_PUBLIC_AWS_DEPLOYMENT = previous),
+  );
+  let captured;
+  t.mock.method(globalThis, "fetch", async (_path, options) => {
+    captured = options;
+    return Response.json({ ok: true });
+  });
+  const body = JSON.stringify({ ticket_id: "CHG-1042" });
+  await requestApi({
+    path: "/api/investigations",
+    identity: { mode: "entra", accountId: "account", getAccessToken: async () => "token" },
+    options: { method: "POST", body },
+  });
+  assert.equal(captured.headers.get("Authorization"), null);
+  assert.equal(captured.headers.get("X-Switchboard-Authorization"), "Bearer token");
+  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
+  assert.equal(captured.headers.get("X-Amz-Content-Sha256"), Buffer.from(hash).toString("hex"));
+});

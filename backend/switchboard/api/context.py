@@ -24,7 +24,7 @@ class RequestContext:
 
 
 def get_request_context(request: Request, response: Response) -> RequestContext:
-    """Resolve trusted identity and isolated D1 storage once per request."""
+    """Resolve trusted identity and isolated storage once per request."""
     auth_mode = get_auth_mode()
     has_authorization = "Authorization" in request.headers
 
@@ -39,6 +39,7 @@ def get_request_context(request: Request, response: Response) -> RequestContext:
             selected_scenario=load_scenarios()["baseline"],
             identity_mode="entra",
         )
+        response.headers["X-Switchboard-Workspace"] = workspace_id
         return RequestContext(
             identity_mode="entra",
             employee_id=employee_id,
@@ -70,6 +71,7 @@ def get_request_context(request: Request, response: Response) -> RequestContext:
         )
 
     employee_id = request.headers.get("X-Demo-Persona-Id", "emp-alex")
+    response.headers["X-Switchboard-Workspace"] = str(opened.workspace.id)
     try:
         EmployeeSession(
             storage=opened.workspace.storage,

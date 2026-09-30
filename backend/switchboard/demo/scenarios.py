@@ -39,7 +39,7 @@ def build_workspace_payload(
     identity_mode: Literal["demo", "entra", "cli", "eval"],
     updated_at: datetime | None = None,
 ) -> dict:
-    """Build one validated D1 workspace reset without writing partial records."""
+    """Build one validated DynamoDB workspace reset without writing partial records."""
     # 1. Validate every fixture before preparing any storage operation.
     records = {}
     for table, model in (

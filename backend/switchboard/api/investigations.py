@@ -2,10 +2,11 @@
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from switchboard.api.context import RequestContext, get_request_context
@@ -27,6 +28,7 @@ from switchboard.investigation.runs import (
     list_investigation_runs,
 )
 from switchboard.investigation.tools import InvestigationContext, employee_session
+from switchboard.jobs import InvestigationJob, history, read, submit
 from switchboard.models import (
     EndpointChangeResult,
     InvestigationEvidenceDetail,
@@ -45,6 +47,7 @@ router = APIRouter(prefix="/api")
 
 class InvestigationRequest(BaseModel):
     ticket_id: str
+    idempotency_key: UUID | None = None
 
 
 class AssignedRequestSummary(TicketDetails):
@@ -128,12 +131,24 @@ def read_ticket(
         raise HTTPException(status_code=404, detail="Ticket unavailable") from None
 
 
-@router.post("/investigations", response_model=InvestigationRun)
+@router.post("/investigations", response_model=InvestigationRun | InvestigationJob)
 def start_investigation(
     request: InvestigationRequest,
+    response: Response,
     request_context: RequestContext = Depends(get_request_context),
-) -> InvestigationRun:
+) -> InvestigationRun | InvestigationJob:
     _get_accessible_ticket(ticket_id=request.ticket_id, request_context=request_context)
+    if os.getenv("INVESTIGATION_QUEUE_URL"):
+        if request.idempotency_key is None:
+            raise HTTPException(status_code=422, detail="Idempotency key required")
+        job = submit(
+            storage=request_context.storage,
+            employee_id=request_context.employee_id,
+            ticket_id=request.ticket_id,
+            request_key=request.idempotency_key,
+        )
+        response.status_code = 202
+        return job
     try:
         if get_investigation_mode() == "fixture":
             run = investigate_ticket_fixture(
@@ -188,19 +203,37 @@ def list_investigations(
     request_context: RequestContext = Depends(get_request_context),
 ) -> list[InvestigationSummary]:
     _get_accessible_ticket(ticket_id=ticket_id, request_context=request_context)
-    return list_investigation_runs(
+    completed = list_investigation_runs(
         storage=request_context.storage,
         employee_id=request_context.employee_id,
         ticket_id=ticket_id,
     )
+    if os.getenv("INVESTIGATION_QUEUE_URL"):
+        pending = history(
+            storage=request_context.storage,
+            employee_id=request_context.employee_id,
+            ticket_id=ticket_id,
+        )
+        return [
+            InvestigationSummary.model_validate(item) for item in pending
+        ] + completed
+    return completed
 
 
-@router.get("/investigations/{run_id}", response_model=InvestigationRun)
+@router.get(
+    "/investigations/{run_id}", response_model=InvestigationRun | InvestigationJob
+)
 def read_investigation(
     run_id: UUID,
     request_context: RequestContext = Depends(get_request_context),
-) -> InvestigationRun:
+) -> InvestigationRun | InvestigationJob:
     try:
+        if os.getenv("INVESTIGATION_QUEUE_URL"):
+            return read(
+                storage=request_context.storage,
+                employee_id=request_context.employee_id,
+                run_id=run_id,
+            )
         return get_investigation_run(
             storage=request_context.storage,
             run_id=run_id,

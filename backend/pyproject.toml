@@ -3,10 +3,12 @@ name = "b2b-saas-internal-agent"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
+    "boto3>=1.43.105",
     "fastapi>=0.141.1",
     "langchain>=1.4.1",
     "langchain-deepseek>=1.1.0",
     "langgraph>=1.2.11",
+    "mangum>=0.22.0",
     "pydantic>=2,<3",
     "pyjwt[crypto]>=2.10,<3",
     "python-dotenv>=1.2.3",
@@ -18,7 +20,9 @@ select = ["E4", "E7", "E9", "F", "I"]
 
 [dependency-groups]
 dev = [
+    "botocore[crt]>=1.43.105",
     "langsmith>=0.12.6",
+    "moto[dynamodb,sqs]>=5.2.3",
     "pyright>=1.1.414",
     "pytest>=9.1.1",
     "ruff>=0.16.8",

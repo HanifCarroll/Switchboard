@@ -1,6 +1,6 @@
 # Switchboard
 
-Switchboard is a fictional 180-person B2B SaaS company that connects customers’ business applications. Its product routes events between CRMs, support platforms, and internal services. Each customer has separate sandbox and production integrations. All people and records in this project are synthetic.
+Switchboard is a fictional B2B SaaS company that connects customers’ business applications. Its product routes events between CRMs, support platforms, and internal services. Each customer has separate sandbox and production integrations. All people and records in this project are synthetic.
 
 ## The internal agent
 
@@ -8,7 +8,7 @@ Switchboard’s support and implementation teams handle customer configuration r
 
 The agent helps employees investigate a request, prepare a change, obtain approval, execute it, and verify the result. It serves Switchboard employees rather than the customers using Switchboard’s product.
 
-The initial workflow changes one integration’s outbound webhook endpoint: “Move Acme’s CRM event delivery to the new endpoint in ticket CHG-1042.” Credentials, payload formats, and event subscriptions stay outside this workflow.
+The workflow changes one integration’s outbound webhook endpoint: “Move Acme’s CRM event delivery to the new endpoint in ticket CHG-1042.” Credentials, payload formats, and event subscriptions stay outside this workflow.
 
 ## Customers and employees
 
@@ -16,11 +16,9 @@ Acme Services routes CRM deal events to its operations system. Globex Software r
 
 | Employee | Role | Assigned customer |
 |---|---|---|
-| Maya Chen | Support specialist | Acme |
 | Alex Rivera | Implementation engineer | Acme |
 | Priya Shah | Technical lead | Acme |
-| Ben Okafor | Implementation engineer | Globex |
-| Elena Rossi | Technical lead | Globex |
+| Ben Okafor | Support specialist | Globex |
 
 Support can read assigned customers’ tickets, integration status, and redacted diagnostic summaries, but cannot change configuration. Implementation engineers can inspect configuration, prepare changes, and execute permitted changes. Technical leads can also approve another employee’s production change for their assigned customer.
 

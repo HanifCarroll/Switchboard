@@ -1,4 +1,4 @@
-"""Explicit demo setup and reset through the D1 storage boundary."""
+"""Explicit demo setup and reset through the DynamoDB storage boundary."""
 
 from typing import Literal
 

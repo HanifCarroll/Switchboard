@@ -1,10 +1,13 @@
 """Shared investigation runner for the CLI and web demo."""
 
+import json
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
+from switchboard.change_management import save_proposal
+from switchboard.dynamodb import DynamoStore
 from switchboard.integrations.employee_directory import EmployeeSession
 from switchboard.integrations.support_desk import get_ticket
 from switchboard.investigation.agent import build_agent
@@ -15,6 +18,7 @@ from switchboard.investigation.workflow import (
     endpoint_change_graph,
 )
 from switchboard.models import EndpointChangeResult, InvestigationRunResult
+from switchboard.proposals import validate_proposal
 from switchboard.storage import WorkspaceStorage
 
 
@@ -51,6 +55,7 @@ def investigate_ticket(
     model: BaseChatModel,
     storage: WorkspaceStorage,
     now: datetime,
+    run_id: UUID | None = None,
 ) -> InvestigationRunResult:
     """Investigate one accessible ticket using the current server time."""
     if now.utcoffset() is None:
@@ -62,6 +67,7 @@ def investigate_ticket(
         model=model,
         storage=storage,
         now=now.isoformat(),
+        run_id=run_id,
     )
 
 
@@ -74,6 +80,7 @@ def _run_investigation(
     storage: WorkspaceStorage,
     now: str,
     scenario_id: str | None = None,
+    run_id: UUID | None = None,
 ) -> InvestigationRunResult:
     """Authorize, run, and persist one ticket investigation."""
     # 1. Authorize the selected ticket before invoking the model.
@@ -82,7 +89,7 @@ def _run_investigation(
     role = session.get_active_employee_role()
 
     # 2. Run the access-controlled workflow with trusted context.
-    workflow_id = uuid4()
+    workflow_id = run_id or uuid4()
     context = EndpointChangeContext(
         agent=build_agent(model=model, now=now),
         model=model,
@@ -92,21 +99,39 @@ def _run_investigation(
             employee_id=employee_id,
         ),
     )
-    raw_result = endpoint_change_graph.invoke(
-        {"request": request, "ticket_id": ticket.id},
-        context=context,
-        config={
-            "run_name": f"investigation-{scenario_id or ticket.id}",
-            "metadata": {
-                "ticket_id": ticket.id,
-                "workflow_id": str(workflow_id),
-                **({"scenario_id": scenario_id} if scenario_id is not None else {}),
-            },
-        },
+    cached = (
+        storage.transport.load_checkpoint(storage.workspace_id)
+        if isinstance(storage.transport, DynamoStore)
+        else None
     )
-    result = EndpointChangeResult.model_validate(raw_result)
+    if cached:
+        result = EndpointChangeResult.model_validate_json(json.dumps(cached))
+        if result.investigation.outcome == "proposal_candidate":
+            saved = save_proposal(
+                proposal=validate_proposal(
+                    investigation=result.investigation, session=session
+                ),
+                session=session,
+            )
+            result = result.model_copy(
+                update={"proposal": saved.proposal, "was_created": saved.was_created}
+            )
+    else:
+        raw_result = endpoint_change_graph.invoke(
+            {"request": request, "ticket_id": ticket.id},
+            context=context,
+            config={
+                "run_name": f"investigation-{scenario_id or ticket.id}",
+                "metadata": {
+                    "ticket_id": ticket.id,
+                    "workflow_id": str(workflow_id),
+                    **({"scenario_id": scenario_id} if scenario_id is not None else {}),
+                },
+            },
+        )
+        result = EndpointChangeResult.model_validate(raw_result)
 
-    # 3. Persist the result and access snapshot in D1.
+    # 3. Persist the result and access snapshot in the workspace store.
     save_investigation_run(
         storage=storage,
         run_id=UUID(str(workflow_id)),

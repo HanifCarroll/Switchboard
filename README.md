@@ -1,138 +1,81 @@
-# Switchboard internal agent
+# Switchboard
 
-Switchboard is a synthetic B2B SaaS change-management demo. An AI agent investigates endpoint-change tickets with access-controlled tools, prepares a proposal, and leaves approval and execution to deterministic application code.
+**An AI-assisted workflow for investigating and safely handling customer integration changes.**
 
-## Architecture
+[Try the live demo](https://d3ar9mvnjcwzyk.cloudfront.net) · [Architecture](docs/architecture.md) · [Business scenario](docs/endpoint-change-scenario.md)
 
-- `frontend/`: Next.js dashboard.
-- `backend/switchboard/`: FastAPI, CLI, LangGraph workflow, and domain logic.
-- `backend/tests/`: deterministic backend and API tests.
-- `backend/evals/`: explicitly invoked live-model evaluations recorded in LangSmith.
-- `cloudflare/`: Worker, private D1 operation bridge, schema migrations, and bridge tests.
-- `backend/data/`: versioned synthetic fixtures, scenarios, and evaluation expectations.
+Switchboard models an internal team managing webhook endpoint changes for a B2B SaaS company. An employee needs to establish who requested a change, whether the destination is registered, which policy applies, and who can approve it. The agent gathers evidence and prepares a recommendation; application code controls the actual business actions.
 
-The hosted application runs Next.js and FastAPI in one Cloudflare Container. The Worker routes browser traffic to the appropriate container port and binds a private outbound service at `switchboard.storage`. The container calls that service with named domain operations; it cannot submit generic SQL. D1 is the sole durable application database.
+## Workflow
 
-Every durable row belongs to a workspace. The public demo assigns each visitor an isolated workspace through an HttpOnly cookie and lets them select fictional personas. Authorization is rechecked at proposal review, approval, execution, and delivery verification. Execution and verification use D1 batches so each receipt and its related business update either persist together or do not persist. Unique constraints and stored receipts make proposal creation, approval, execution, and verification safe to retry.
+1. **Investigate:** the agent reads authorized tickets, customer records, integration configuration, and policies.
+2. **Validate:** structured output and a separate policy review check the report. Unsupported changes remain blocked.
+3. **Propose:** application code checks current records before saving a configuration change proposal.
+4. **Approve:** a different assigned technical lead reviews the proposal.
+5. **Execute:** the application rechecks authorization, the production change window, approval, and configuration version before recording the change.
+6. **Verify:** a separate delivery check records its outcome. Failed or uncertain delivery requires manual intervention.
 
-The Worker keeps one `basic` Container instance and allows it to sleep after two minutes of inactivity. D1 records remain available across container sleeps and restarts.
+The dashboard presents evidence, decision criteria, blockers, approvals, and action receipts. Investigations run in the background and can be reopened after navigation or reload. Each visitor receives an isolated workspace and can switch between fictional employee personas to explore the access rules.
 
-## Local development
+The company, customer data, and delivery events are synthetic. Investigations use a real DeepSeek model; delivery verification is deterministic and does not contact a real webhook. Microsoft Entra authentication is supported for configured workspaces; the public demo uses fictional identities.
 
-Install the three dependency sets:
+## Engineering
+
+- **Python, FastAPI, LangGraph, and Pydantic:** a bounded investigation workflow with read-only tools, trusted identity context, structured reports, and one allowed policy revision.
+- **Next.js and React:** request and approval views, captured-versus-current evidence, identity-scoped queries, and background job polling.
+- **AWS Lambda and CloudFront:** separate website, API, and investigation worker; protected origins and appropriate response caching.
+- **DynamoDB:** workspace generations, conditional business transactions, canonical proposals, immutable result chunks, and retry-safe receipts.
+- **SQS and EventBridge Scheduler:** durable submissions, native retries, worker leases, dead-letter handling, and scheduled recovery.
+- **GitHub Actions:** deterministic checks, scoped OIDC deployment, immutable function versions, and independent releases.
+
+See [architecture and reliability](docs/architecture.md) for the boundaries and tradeoffs, or [AWS operations](aws/README.md) for deployment and recovery commands.
+
+## Run locally
+
+Requirements: Python 3.11+, uv, Node.js 24, AWS CLI, and Docker.
 
 ```sh
 (cd backend && uv sync)
 (cd frontend && npm ci)
-(cd cloudflare && npm ci)
-```
-
-Put `DEEPSEEK_API_KEY` and optional LangSmith settings in `backend/.env`. To use Microsoft sign-in locally, copy the public browser values from `frontend/entra.example.env` to `frontend/.env.local` and the server values from `backend/entra.example.env` to `backend/.env`.
-
-Start the local D1 bridge, API, and web application from the repository root:
-
-```sh
 ./scripts/dev
 ```
 
-Open <http://localhost:3000>. Local development uses hybrid authentication: the same build supports the isolated demo and Microsoft sign-in. Wrangler stores the local D1 database under the ignored `cloudflare/.wrangler/` directory.
+Open http://localhost:3000. The script starts DynamoDB Local, the Python API, and Next.js. Local records persist in the `switchboard-local-data` Docker volume. Investigations use deterministic fixtures by default, through the same authorization and persistence rules.
 
-`./scripts/dev` uses deterministic fixture investigations by default. They return immediately but still use the real authorization, proposal validation, evidence snapshots, and D1 persistence. The report labels them as fixture results. Run the real model when testing agent behavior:
+For real investigations, set `DEEPSEEK_API_KEY` in ignored `backend/.env`, then run:
 
 ```sh
 SWITCHBOARD_INVESTIGATION_MODE=live ./scripts/dev
 ```
 
-The CLI uses the same storage bridge. Run it while `./scripts/dev` is active:
-
-```sh
-cd backend
-uv run python -m switchboard --reset-demo baseline --confirm-reset
-uv run python -m switchboard
-```
-
-Live investigations make paid DeepSeek calls. Fixture investigations, resetting data, retrieval, approval, execution, and delivery verification do not call a model. The graph finishes after saving a proposal; review, approval, execution, and verification are separate application operations.
-
-## Demo behavior
-
-The public hosted build uses anonymous demo mode with live model investigations. Each visitor receives an isolated workspace with five independent requests: a valid request, an unsafe destination, an unauthorized requester, a proposal awaiting approval, and an approved proposal ready to execute. Requests persist as the visitor switches personas, and each persona sees only assigned work and approvals they are allowed to review.
-
-The agent has read-only, access-controlled tools for tickets, customers, integrations, and policies. It returns a structured investigation result that Pydantic validates. Application code then validates the current business records before saving a proposal. The model cannot approve or execute a change.
-
-An independent assigned technical lead must approve a production proposal. Execution rechecks the actor, proposal snapshot, approval, change window, and current configuration. The configuration update and execution receipt are one atomic D1 batch. Delivery verification then confirms that the executed endpoint and version remain active before sending a deterministic synthetic event. Saving its evidence and updating the ticket are another atomic D1 batch: confirmed delivery closes the ticket, while failure or uncertainty requires manual intervention. Stored receipts make both actions safe to retry without repeating the configuration change or test event.
-
-Synthetic scenarios live under `backend/data/scenarios/`. Their withheld evaluation expectations live under `backend/data/evaluations/` and are never passed to the agent.
+For Microsoft sign-in, copy the browser values from `frontend/entra.example.env` to `frontend/.env.local` and server values from `backend/entra.example.env` to `backend/.env`. Local authentication supports both demo and Microsoft sign-in.
 
 ## Checks
 
-Run all deterministic checks from the repository root:
-
 ```sh
-(cd backend && uv run ruff check .)
-(cd backend && uv run ruff format --check .)
-(cd backend && uv run pyright)
-(cd backend && uv run pytest -v)
-
-(cd frontend && npm test)
-(cd frontend && npm run lint)
-(cd frontend && npm run format:check)
-(cd frontend && npm run build)
-
-(cd cloudflare && npm run check)
-(cd cloudflare && npm run test:storage)
+(cd backend && uv run ruff check . && uv run ruff format --check .)
+(cd backend && uv run pyright && uv run pytest -v)
+(cd frontend && npm test && npm run lint && npm run format:check && npm run build)
 git diff --check
 ```
 
-`test:storage` runs the real Worker-to-D1 bridge against a temporary local D1 database. It checks workspace isolation, rejection of unknown operations, atomic execution and verification, and idempotent retries after restarting the Worker. Ordinary tests make no model calls.
+Backend tests cover authorization, report validation, business transitions, DynamoDB transactions, and queue failure scenarios. Frontend tests cover authentication, workflow states, evidence, and mutation behavior. Ordinary tests do not call a model.
 
-Live-model evaluations are separate:
+Live model evaluations are separate:
 
 ```sh
 cd backend
 uv run pytest evals/test_investigations.py -v
 ```
 
-## Deploy to Cloudflare
+## Repository
 
-The Cloudflare account needs Workers, Containers, and D1 access. Wrangler must be authenticated before deployment.
-
-Create the production database once and copy its ID into `cloudflare/wrangler.jsonc`:
-
-```sh
-cd cloudflare
-npx wrangler d1 create switchboard
-npx wrangler d1 migrations apply switchboard --remote
-```
-
-Store the model key as a Worker secret. Do not put it in Wrangler configuration or Git:
-
-```sh
-npx wrangler secret put DEEPSEEK_API_KEY
-```
-
-Deploy the Worker and Container:
-
-```sh
-npm run deploy
-```
-
-The production configuration compiles the browser and runs the API in `demo` mode. Entra settings are only needed if a hosted authenticated mode is deliberately enabled later. The container image targets Linux AMD64 and exposes Next.js on port 3000 and FastAPI on port 8000.
-
-After deployment, verify the Worker URL, prepare two browser sessions and confirm they receive different workspace data, run a real investigation, then execute and verify an approved proposal. Retry execution and verification; each retry must return its existing receipt without repeating the business action.
-
-### Automatic production deployment
-
-`.github/workflows/deploy.yml` runs the full deterministic check suite on every push to `main`. If every check passes, it applies pending remote D1 migrations and deploys the Worker and Container. Production deployments are serialized so two pushes cannot update D1 or Cloudflare at the same time.
-
-Configure these GitHub Actions repository secrets before pushing the workflow:
-
-- `CLOUDFLARE_ACCOUNT_ID`: the account ID from `cloudflare/wrangler.jsonc`.
-- `CLOUDFLARE_API_TOKEN`: the token value from a Cloudflare API token with account-level **D1 Edit**, **Containers Edit**, and **Workers Scripts Edit** permissions. Copy only the token value, not Cloudflare's example verification command.
-
-The existing `DEEPSEEK_API_KEY` remains a Worker secret in Cloudflare. It is not copied into GitHub.
-
-## Authentication
-
-The API supports `entra`, `demo`, and `hybrid` modes. `entra` validates tenant-specific RS256 access tokens, audience, `access_as_user` scope, authorized client, timestamps, and the mapped employee Object ID. `demo` uses an isolated fictional workspace. `hybrid` selects the mode per request based on the presence of a bearer token.
-
-Hosted portfolio deployment uses `demo`. Local development uses `hybrid`. Supplying both a bearer token and `X-Demo-Persona-Id` is rejected, authenticated users cannot call demo setup endpoints, and all business authorization continues to use the employee and customer assignments stored in D1.
+| Path | Responsibility |
+| --- | --- |
+| `backend/switchboard/` | API, CLI, investigation workflow, business rules, and persistence |
+| `backend/tests/` | Deterministic domain, API, storage, and job tests |
+| `backend/evals/` | Explicitly invoked model evaluations |
+| `backend/data/` | Synthetic records, scenarios, and withheld evaluation expectations |
+| `frontend/` | Next.js dashboard |
+| `aws/` | Infrastructure and operations |
+| `scripts/` | Local development, packaging, deployment, and storage verification |

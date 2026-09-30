@@ -6,7 +6,7 @@ from threading import RLock
 from switchboard.storage import StorageError, WorkspaceStorage
 
 
-class MemoryStorageBridge:
+class MemoryWorkspaceStore:
     """Exercise application behavior through the same domain-operation boundary."""
 
     def __init__(self) -> None:
@@ -16,7 +16,6 @@ class MemoryStorageBridge:
     def storage(self, *, workspace_id: str) -> WorkspaceStorage:
         return WorkspaceStorage(
             workspace_id=workspace_id,
-            bridge_url="memory://storage",
             transport=self.handle,
         )
 

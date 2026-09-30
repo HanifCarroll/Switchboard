@@ -105,6 +105,7 @@ export type InvestigationBlocker = {
   resolution: string;
 };
 export type InvestigationRun = {
+  status?: "completed";
   current_status: WorkflowStatus;
   run_id: string;
   ticket_id: string;
@@ -138,6 +139,43 @@ export type InvestigationRun = {
     }[];
   };
 };
+
+export type InvestigationJob = {
+  run_id: string;
+  ticket_id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  error: string | null;
+  retryable: boolean;
+};
+export type InvestigationResponse = InvestigationRun | InvestigationJob;
+
+function submissionStorageKey(identity: RequestIdentity, ticketId: string) {
+  const workspace = sessionStorage.getItem("switchboard-workspace") ?? "local";
+  return JSON.stringify(["switchboard-submission", workspace, ...identityKey(identity), ticketId]);
+}
+
+export function investigationRequestKey(identity: RequestIdentity, ticketId: string) {
+  const key = submissionStorageKey(identity, ticketId);
+  const existing = sessionStorage.getItem(key);
+  if (existing) return JSON.parse(existing).key as string;
+  const requestKey = crypto.randomUUID();
+  sessionStorage.setItem(key, JSON.stringify({ key: requestKey, runId: null }));
+  return requestKey;
+}
+
+export function rememberSubmission(identity: RequestIdentity, response: InvestigationResponse) {
+  if (typeof sessionStorage === "undefined") return;
+  const key = submissionStorageKey(identity, response.ticket_id);
+  const existing = sessionStorage.getItem(key);
+  if (!existing) return;
+  const submission = JSON.parse(existing);
+  if (submission.runId && submission.runId !== response.run_id) return;
+  if ("result" in response || response.status === "failed") {
+    sessionStorage.removeItem(key);
+  } else {
+    sessionStorage.setItem(key, JSON.stringify({ ...submission, runId: response.run_id }));
+  }
+}
 
 export type EvidenceKind = "ticket" | "customer" | "integration" | "policy";
 export type EvidenceSnapshot = {
@@ -193,7 +231,12 @@ export async function requestApi<T>({
 }): Promise<T> {
   // 1. Keep identity headers under this helper's control.
   const headers = new Headers(options.headers);
-  if (headers.has("Authorization") || headers.has("X-Demo-Persona-Id")) {
+  if (
+    headers.has("Authorization") ||
+    headers.has("X-Demo-Persona-Id") ||
+    headers.has("X-Switchboard-Authorization") ||
+    headers.has("X-Amz-Content-Sha256")
+  ) {
     throw new Error("Do not supply identity headers through request options.");
   }
   headers.set("Content-Type", "application/json");
@@ -203,7 +246,22 @@ export async function requestApi<T>({
     headers.set("X-Demo-Persona-Id", identity.employeeId);
   } else {
     const accessToken = await identity.getAccessToken();
-    headers.set("Authorization", `Bearer ${accessToken}`);
+    headers.set(
+      process.env.NEXT_PUBLIC_AWS_DEPLOYMENT === "1"
+        ? "X-Switchboard-Authorization"
+        : "Authorization",
+      `Bearer ${accessToken}`,
+    );
+  }
+
+  if (process.env.NEXT_PUBLIC_AWS_DEPLOYMENT === "1" && options.body != null) {
+    if (typeof options.body !== "string")
+      throw new Error("Signed API requests require a JSON body.");
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(options.body));
+    headers.set(
+      "X-Amz-Content-Sha256",
+      Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(""),
+    );
   }
 
   // 3. Send once and surface failures; never retry a business action here.
@@ -212,6 +270,9 @@ export async function requestApi<T>({
     cache: "no-store",
     headers,
   });
+  const workspace = response.headers.get("X-Switchboard-Workspace");
+  if (workspace && typeof sessionStorage !== "undefined")
+    sessionStorage.setItem("switchboard-workspace", workspace);
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     throw new ApiRequestError(
@@ -266,6 +327,10 @@ export function historyQuery(identity: RequestIdentity, ticketId: string | null)
   return {
     queryKey: investigationKeys.history(identity, ticketId),
     enabled: ticketId !== null,
+    refetchInterval: (query: { state: { data: InvestigationHistoryItem[] | undefined } }) =>
+      query.state.data?.some((item) => item.outcome === "queued" || item.outcome === "running")
+        ? 2000
+        : false,
     queryFn: ({ signal }: { signal: AbortSignal }) => {
       if (!ticketId) throw new Error("Select a ticket first.");
       return requestApi<InvestigationHistoryItem[]>({
@@ -281,13 +346,21 @@ export function investigationQuery(identity: RequestIdentity, runId: string | nu
   return {
     queryKey: investigationKeys.run(identity, runId),
     enabled: runId !== null,
-    queryFn: ({ signal }: { signal: AbortSignal }) => {
+    refetchInterval: (query: { state: { data: InvestigationResponse | undefined } }) =>
+      query.state.data &&
+      !("result" in query.state.data) &&
+      (query.state.data.status === "queued" || query.state.data.status === "running")
+        ? 2000
+        : false,
+    queryFn: async ({ signal }: { signal: AbortSignal }) => {
       if (!runId) throw new Error("Select an investigation first.");
-      return requestApi<InvestigationRun>({
+      const response = await requestApi<InvestigationResponse>({
         path: `/api/investigations/${runId}`,
         identity,
         options: { signal },
       });
+      rememberSubmission(identity, response);
+      return response;
     },
   };
 }

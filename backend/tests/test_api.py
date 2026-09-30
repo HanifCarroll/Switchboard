@@ -157,8 +157,8 @@ def test_demo_case_endpoints_are_removed(storage):
     assert prepare.status_code == 404
 
 
-def test_ticket_summaries_include_actor_specific_workflow_state(storage_bridge):
-    base = storage_bridge.storage(workspace_id="unused")
+def test_ticket_summaries_include_actor_specific_workflow_state(memory_store):
+    base = memory_store.storage(workspace_id="unused")
     storage = open_demo_workspace(
         workspace_id=None, base_storage=base
     ).workspace.storage
@@ -181,8 +181,8 @@ def test_ticket_summaries_include_actor_specific_workflow_state(storage_bridge):
     assert [item["id"] for item in ben_tickets.json()] == ["CHG-1043"]
 
 
-def test_pending_proposal_appears_only_in_the_eligible_reviewer_inbox(storage_bridge):
-    base = storage_bridge.storage(workspace_id="unused")
+def test_pending_proposal_appears_only_in_the_eligible_reviewer_inbox(memory_store):
+    base = memory_store.storage(workspace_id="unused")
     storage = open_demo_workspace(
         workspace_id=None, base_storage=base
     ).workspace.storage
@@ -362,8 +362,8 @@ def test_manual_policy_review_endpoint_is_removed(storage):
     assert response.status_code == 404
 
 
-def test_executed_proposal_can_be_verified_and_reviewed(storage_bridge):
-    base = storage_bridge.storage(workspace_id="unused")
+def test_executed_proposal_can_be_verified_and_reviewed(memory_store):
+    base = memory_store.storage(workspace_id="unused")
     storage = open_demo_workspace(
         workspace_id=None, base_storage=base
     ).workspace.storage

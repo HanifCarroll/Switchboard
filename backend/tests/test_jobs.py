@@ -4,6 +4,7 @@ import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from threading import Lock
 from uuid import UUID, uuid4
 
 import boto3
@@ -116,6 +117,17 @@ def test_global_allowance_is_atomic_across_visitors_and_rolls_over_at_utc_midnig
         transport=DynamoStore(first.transport.table, first.transport.client),
     )
     initialize_demo_portfolio(storage=second)
+
+    # Moto restores whole-table snapshots on rollback without transaction isolation.
+    # Serialize its mock writes to match DynamoDB's atomic transaction behavior.
+    transaction_lock = Lock()
+    write_items = first.transport.client.transact_write_items
+
+    def atomic_write(**arguments):
+        with transaction_lock:
+            return write_items(**arguments)
+
+    monkeypatch.setattr(first.transport.client, "transact_write_items", atomic_write)
 
     def try_submit(storage):
         try:

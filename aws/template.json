@@ -581,6 +581,7 @@
                   "Action": [
                     "lambda:GetFunction",
                     "lambda:GetFunctionConfiguration",
+                    "lambda:GetFunctionUrlConfig",
                     "lambda:UpdateFunctionConfiguration",
                     "lambda:UpdateFunctionCode",
                     "lambda:PublishVersion",
@@ -632,6 +633,68 @@
                   "Action": "iam:GetRole",
                   "Resource": {
                     "Fn::Sub": "arn:aws:iam::${AWS::AccountId}:role/switchboard-*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudfront:GetDistribution",
+                    "cloudfront:GetDistributionConfig",
+                    "cloudfront:ListTagsForResource"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Delivery}"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "pricingplanmanager:GetSubscription",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "DeliveryPlan",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "dynamodb:DescribeTable",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "Database",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "sqs:GetQueueAttributes",
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "Investigations",
+                        "Arn"
+                      ]
+                    },
+                    {
+                      "Fn::GetAtt": [
+                        "DeadLetters",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "wafv2:GetWebACL",
+                    "wafv2:ListTagsForResource"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "Firewall",
+                      "Arn"
+                    ]
                   }
                 },
                 {

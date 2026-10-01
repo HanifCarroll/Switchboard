@@ -465,6 +465,14 @@ Resources:
                   - 'lambda:ListTags'
                   - 'lambda:TagResource'
                   - 'lambda:UntagResource'
+                  - lambda:ListVersionsByFunction
+                  - lambda:GetRuntimeManagementConfig
+                  - lambda:GetProvisionedConcurrencyConfig
+                  - lambda:GetFunctionCodeSigningConfig
+                  - lambda:GetFunctionRecursionConfig
+                  - lambda:GetFunctionScalingConfig
+                  - lambda:PutFunctionConcurrency
+                  - lambda:DeleteFunctionConcurrency
                 Resource:
                   - Fn::Sub: arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:switchboard-api
                   - Fn::Sub: arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:switchboard-api:*
@@ -546,6 +554,13 @@ Resources:
                   StringEquals:
                     iam:PassedToService: lambda.amazonaws.com
               - Effect: Allow
+                Action: lambda:DeleteFunction
+                Resource:
+                  - Fn::Sub: ${API.Arn}:*
+                  - Fn::Sub: ${Worker.Arn}:*
+                  - Fn::Sub: ${Website.Arn}:*
+                  - Fn::Sub: ${Receiver.Arn}:*
+              - Effect: Allow
                 Action: lambda:GetAccountSettings
                 Resource: '*'
               - Effect: Allow
@@ -553,7 +568,7 @@ Resources:
                 Resource:
                   Fn::GetAtt: [DeploymentArtifacts, Arn]
               - Effect: Allow
-                Action: ['s3:GetObject', 's3:PutObject', 's3:AbortMultipartUpload']
+                Action: ['s3:GetObject', 's3:GetObjectVersion', 's3:PutObject', 's3:AbortMultipartUpload']
                 Resource:
                   Fn::Sub: ${DeploymentArtifacts.Arn}/*
               - Effect: Allow

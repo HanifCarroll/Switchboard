@@ -629,6 +629,13 @@
                 },
                 {
                   "Effect": "Allow",
+                  "Action": "iam:GetRole",
+                  "Resource": {
+                    "Fn::Sub": "arn:aws:iam::${AWS::AccountId}:role/switchboard-*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
                   "Action": "lambda:GetLayerVersion",
                   "Resource": [
                     "arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerX86:30",

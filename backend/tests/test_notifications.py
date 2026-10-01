@@ -4,12 +4,14 @@ import json
 from pathlib import Path
 from unittest.mock import Mock
 
+import yaml
+
 
 def test_operational_email_has_a_clear_subject_summary_and_links(monkeypatch):
 
     # 1. Load the deployed handler source and supply a representative alarm.
-    template = json.loads(
-        (Path(__file__).parents[2] / "aws" / "template.json").read_text()
+    template = yaml.safe_load(
+        (Path(__file__).parents[2] / "aws" / "template.yml").read_text()
     )
     source = template["Resources"]["Notifications"]["Properties"]["Code"]["ZipFile"]
     namespace = {}

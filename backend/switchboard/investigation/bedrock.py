@@ -108,7 +108,7 @@ def create_bedrock_model(model_id=None):
         model_kwargs={"parallel_tool_calls": False} if use_streaming else {},
         callbacks=[StreamingDeadline()] if use_streaming else None,
         temperature=0,
-        max_completion_tokens=8192,
+        max_completion_tokens=20_000 if model_id == "minimax.minimax-m2.5" else 8192,
         service_tier="default",
         timeout=60,
         max_retries=1,

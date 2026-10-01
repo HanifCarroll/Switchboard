@@ -53,15 +53,15 @@ For real investigations, set `DEEPSEEK_API_KEY` in ignored `backend/.env` and ru
 SWITCHBOARD_MODEL_PROVIDER=deepseek SWITCHBOARD_INVESTIGATION_MODE=live ./scripts/dev
 ```
 
-The Bedrock adapter supports `deepseek.v3.2` and `openai.gpt-6-luna`. Use an authenticated AWS profile with access to the selected model:
+The Bedrock adapter supports `minimax.minimax-m2.5`, `deepseek.v3.2`, and `openai.gpt-6-luna`. Use an authenticated AWS profile with access to the selected model:
 
 ```sh
 BEDROCK_PROFILE=hc-studio SWITCHBOARD_MODEL_PROVIDER=bedrock \
-  SWITCHBOARD_BEDROCK_MODEL=openai.gpt-6-luna \
+  SWITCHBOARD_BEDROCK_MODEL=minimax.minimax-m2.5 \
   SWITCHBOARD_INVESTIGATION_MODE=live ./scripts/dev
 ```
 
-The `BEDROCK_PROFILE` is separate from the local database credentials. Model access and evaluation quality must be verified before selecting a provider for a hosted release. The public demo uses the direct DeepSeek provider.
+The `BEDROCK_PROFILE` is separate from the local database credentials. Model access and evaluation quality must be verified before selecting a provider for a hosted release. The public demo uses MiniMax M2.5 through Amazon Bedrock.
 
 For Microsoft sign-in, copy the browser values from `frontend/entra.example.env` to `frontend/.env.local` and server values from `backend/entra.example.env` to `backend/.env`. Local authentication supports both demo and Microsoft sign-in.
 

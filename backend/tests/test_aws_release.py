@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+import yaml
 from botocore.exceptions import ClientError
 
 spec = importlib.util.spec_from_file_location(
@@ -16,6 +17,37 @@ spec = importlib.util.spec_from_file_location(
 assert spec is not None and spec.loader is not None
 aws = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(aws)
+
+
+def test_provision_uploads_yaml_as_equivalent_json_within_cloudformation_limit(
+    monkeypatch,
+):
+
+    # 1. Supply deployment clients without making AWS requests.
+    session = Mock()
+    cloudformation = Mock()
+    functions = Mock()
+    session.client.side_effect = lambda name: {
+        "cloudformation": cloudformation,
+        "lambda": functions,
+    }[name]
+    functions.get_account_settings.return_value = {
+        "AccountLimit": {"ConcurrentExecutions": 1000}
+    }
+    monkeypatch.setattr(aws, "provision_model_key", lambda session: None)
+    update = Mock()
+    monkeypatch.setattr(aws, "update_stack", update)
+
+    aws.provision(session)
+
+    # 2. Check the uploaded content, size, and a runtime role reference.
+    body = update.call_args.kwargs["template"]
+    template = yaml.safe_load((aws.ROOT / "aws" / "template.yml").read_text())
+    assert json.loads(body) == template
+    assert len(body.encode("utf-8")) <= 51200
+    assert template["Resources"]["API"]["Properties"]["Role"] == {
+        "Fn::GetAtt": ["APIRole", "Arn"]
+    }
 
 
 @pytest.mark.parametrize("employee_id", ["emp-alex", "wrong-identity"])

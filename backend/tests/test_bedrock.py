@@ -218,6 +218,7 @@ def test_minimax_stream_assembles_tool_arguments_and_stops_at_deadline(
         body = json.loads(request.content)
         assert body["stream"] is True
         assert body["parallel_tool_calls"] is False
+        assert body["max_completion_tokens"] == 20_000
         return httpx.Response(
             200,
             headers={"content-type": "text/event-stream"},

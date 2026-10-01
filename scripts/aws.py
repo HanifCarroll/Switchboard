@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.request import HTTPCookieProcessor, build_opener, urlopen
 
 import boto3
+import yaml
 from botocore.exceptions import ClientError
 from dotenv import dotenv_values
 
@@ -134,7 +135,9 @@ def build(component, session):
                         "from switchboard.investigation.agent import create_model; "
                         "import boto3; "
                         "[boto3.client(name) for name in ('dynamodb', 'sqs', 'ssm', 'stepfunctions', 'xray', 'sts')]; "
-                        "assert create_model().model_name == 'deepseek.v3.2'"
+                        "model = create_model(); "
+                        "assert model.model_name == 'minimax.minimax-m2.5'; "
+                        "assert model.max_tokens == 20000"
                     ),
                 ],
                 directory,
@@ -145,7 +148,7 @@ def build(component, session):
                     "AWS_SECRET_ACCESS_KEY": "package-check",
                     "AWS_DEFAULT_REGION": "us-east-1",
                     "SWITCHBOARD_MODEL_PROVIDER": "bedrock",
-                    "SWITCHBOARD_BEDROCK_MODEL": "deepseek.v3.2",
+                    "SWITCHBOARD_BEDROCK_MODEL": "minimax.minimax-m2.5",
                 },
             )
         receipts["backend"] = package(
@@ -251,7 +254,7 @@ def provision(session, alert_email=None):
     arguments = {
         "StackName": "switchboard",
         "TemplateBody": json.dumps(
-            json.loads((ROOT / "aws" / "template.json").read_text()),
+            yaml.safe_load((ROOT / "aws" / "template.yml").read_text()),
             separators=(",", ":"),
         ),
         "Capabilities": ["CAPABILITY_NAMED_IAM"],
@@ -541,7 +544,7 @@ def main():
     )
     parser.add_argument(
         "--bedrock-model",
-        choices=["deepseek.v3.2", "openai.gpt-6-luna"],
+        choices=["deepseek.v3.2", "openai.gpt-6-luna", "minimax.minimax-m2.5"],
         help="Bedrock worker model (release with --model-provider bedrock)",
     )
     arguments = parser.parse_args()

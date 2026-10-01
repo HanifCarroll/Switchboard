@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from switchboard.aws_clients import aws_client
 from switchboard.configuration import deepseek_api_key, runtime_settings
 from switchboard.demo.scenarios import build_workspace_payload, load_scenarios
 from switchboard.integrations import delivery_service
@@ -10,9 +11,11 @@ from tests.storage_fake import MemoryWorkspaceStore
 
 @pytest.fixture(autouse=True)
 def fresh_configuration():
+    aws_client.cache_clear()
     runtime_settings.cache_clear()
     deepseek_api_key.cache_clear()
     yield
+    aws_client.cache_clear()
     runtime_settings.cache_clear()
     deepseek_api_key.cache_clear()
 

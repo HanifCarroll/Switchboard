@@ -1,0 +1,55 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "HC Studio administrative sign-in without root access keys.",
+  "Resources": {
+    "Administrator": {
+      "Type": "AWS::IAM::User",
+      "Properties": {
+        "UserName": "hc-studio-admin",
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AdministratorAccess",
+          "arn:aws:iam::aws:policy/SignInLocalDevelopmentAccess"
+        ],
+        "Policies": [
+          {
+            "PolicyName": "RequireMFA",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Deny",
+                  "NotAction": [
+                    "iam:ChangePassword",
+                    "iam:GetAccountPasswordPolicy",
+                    "iam:GetUser",
+                    "iam:CreateVirtualMFADevice",
+                    "iam:EnableMFADevice",
+                    "iam:ListMFADevices",
+                    "iam:ListVirtualMFADevices",
+                    "iam:ResyncMFADevice",
+                    "sts:GetSessionToken",
+                    "signin:AuthorizeOAuth2Access",
+                    "signin:CreateOAuth2Token"
+                  ],
+                  "Resource": "*",
+                  "Condition": {
+                    "BoolIfExists": {
+                      "aws:MultiFactorAuthPresent": "false"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "SignInURL": {
+      "Value": {
+        "Fn::Sub": "https://${AWS::AccountId}.signin.aws.amazon.com/console"
+      }
+    }
+  }
+}

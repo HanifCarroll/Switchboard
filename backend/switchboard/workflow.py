@@ -6,9 +6,9 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-import boto3
 from botocore.exceptions import ClientError
 
+from switchboard.aws_clients import aws_client
 from switchboard.configuration import runtime_settings
 from switchboard.dynamodb import DynamoStore, encode
 from switchboard.models import Record, Text
@@ -39,7 +39,7 @@ def start(storage: WorkspaceStorage, run_id: str) -> bool:
         )
     )
     try:
-        boto3.client("stepfunctions").start_execution(
+        aws_client("stepfunctions").start_execution(
             stateMachineArn=arn,
             name=f"run-{payload.run_id}",
             input=payload.model_dump_json(),
@@ -122,7 +122,7 @@ def _receipt(storage: WorkspaceStorage, run_id: str, stage: Stage) -> dict | Non
 
 
 def _callback(token: str, *, output: dict | None = None, error: str | None = None):
-    client = boto3.client("stepfunctions")
+    client = aws_client("stepfunctions")
     try:
         if error:
             client.send_task_failure(taskToken=token, error=error)

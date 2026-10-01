@@ -9,9 +9,9 @@ from contextlib import contextmanager
 from typing import Any
 from uuid import uuid4
 
-import boto3
 from botocore.exceptions import ClientError
 
+from switchboard.aws_clients import aws_client
 from switchboard.storage import StorageError
 
 CHUNK_BYTES = 280 * 1024
@@ -31,7 +31,7 @@ class DynamoStore:
 
     def __init__(self, table: str | None = None, client: Any = None):
         self.table = table or os.environ["DYNAMODB_TABLE"]
-        self.client = client or boto3.client("dynamodb")
+        self.client = client or aws_client("dynamodb")
         self.generations: dict[str, str] = {}
         self.staging: set[str] = set()
         self.lease: dict | None = None

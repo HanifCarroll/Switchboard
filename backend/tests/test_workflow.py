@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from unittest.mock import Mock
 from uuid import UUID, uuid4
 
-import boto3
 import pytest
 from botocore.exceptions import ClientError
 
@@ -26,11 +25,11 @@ def change(dynamo, monkeypatch):
         "SWITCHBOARD_STATE_MACHINE_ARN",
         "arn:aws:states:us-east-1:123456789012:stateMachine:switchboard-change-workflow",
     )
-    original = boto3.client
+    original = workflow.aws_client
     client = Mock()
     monkeypatch.setattr(
-        workflow.boto3,
-        "client",
+        workflow,
+        "aws_client",
         lambda name, **kwargs: (
             client if name == "stepfunctions" else original(name, **kwargs)
         ),

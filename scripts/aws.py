@@ -3,15 +3,18 @@
 
 import argparse
 import hashlib
+import http.cookiejar
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.request import HTTPCookieProcessor, build_opener, urlopen
 
 import boto3
 from botocore.exceptions import ClientError
@@ -241,6 +244,10 @@ def build(component, session):
 def provision(session, alert_email=None):
     provision_model_key(session)
     client = session.client("cloudformation")
+    concurrency = session.client("lambda").get_account_settings()["AccountLimit"][
+        "ConcurrentExecutions"
+    ]
+    reservations = "enabled" if concurrency >= 122 else "disabled"
     arguments = {
         "StackName": "switchboard",
         "TemplateBody": json.dumps(
@@ -254,15 +261,23 @@ def provision(session, alert_email=None):
     except client.exceptions.ClientError as error:
         if "does not exist" not in str(error):
             raise
+        arguments["Parameters"] = [
+            {"ParameterKey": "ReserveConcurrency", "ParameterValue": reservations}
+        ]
         if alert_email is not None:
-            arguments["Parameters"] = [
+            arguments["Parameters"].append(
                 {"ParameterKey": "AlertEmail", "ParameterValue": alert_email}
-            ]
-        client.create_stack(**arguments)
+            )
+        client.create_stack(**arguments, EnableTerminationProtection=True)
         waiter = "stack_create_complete"
     else:
-        changes = {"AlertEmail": alert_email} if alert_email is not None else {}
+        changes = {"ReserveConcurrency": reservations}
+        if alert_email is not None:
+            changes["AlertEmail"] = alert_email
         update_stack(session, changes, template=arguments["TemplateBody"])
+        client.update_termination_protection(
+            StackName="switchboard", EnableTerminationProtection=True
+        )
         return
     print(
         "Provisioning fixed-capacity storage, queues, Lambda functions, and execution roles.",
@@ -279,6 +294,37 @@ def outputs(session):
         item["OutputKey"]: item["OutputValue"]
         for item in response["Stacks"][0]["Outputs"]
     }
+
+
+def smoke_check(session):
+    """Check deployed HTML, its assets, and database-backed visitor routes."""
+    url = outputs(session)["DeliveryURL"].rstrip("/")
+    opener = build_opener(HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    for attempt in range(3):
+        try:
+            with opener.open(url + "/", timeout=30) as response:
+                html = response.read().decode()
+                if response.status != 200 or "Switchboard" not in html:
+                    raise RuntimeError("The deployed website is unavailable")
+            asset = re.search(r'src="(/_next/static/[^"<>]+\.js)"', html)
+            if asset is None:
+                raise RuntimeError("The deployed website has no JavaScript bundle")
+            with opener.open(url + asset.group(1), timeout=30) as response:
+                if response.status != 200 or not response.read():
+                    raise RuntimeError("The deployed website bundle is unavailable")
+            with opener.open(url + "/api/me", timeout=30) as response:
+                identity = json.load(response)
+                if identity.get("employee_id") != "emp-alex":
+                    raise RuntimeError("The deployed API cannot open a demo workspace")
+            with opener.open(url + "/api/demo/personas", timeout=30) as response:
+                personas = json.load(response)
+                if not any(persona["id"] == "emp-priya" for persona in personas):
+                    raise RuntimeError("The deployed API cannot read workspace data")
+            return
+        except Exception:
+            if attempt == 2:
+                raise
+            time.sleep(3 * (attempt + 1))
 
 
 def release(session, component, mode="live", model_provider=None, bedrock_model=None):
@@ -344,8 +390,27 @@ def release(session, component, mode="live", model_provider=None, bedrock_model=
         versions[("API" if name == "api" else name.title()) + "Version"] = version
         print(f"Published {name} version {version}.", flush=True)
 
-    # 4. Promote the selected components through one CloudFormation update.
-    update_stack(session, versions)
+    # 4. Promote and verify; restore the previous selection if health checks fail.
+    receipt = {"status": "pending", "components": names}
+    try:
+        update_stack(session, versions)
+        smoke_check(session)
+    except Exception as error:
+        receipt.update(status="failed", reason=str(error), rolled_back=False)
+        rollback_changes = {key: settings[key] for key in versions}
+        rollback_changes.update({key: settings[key] for key in changes})
+        try:
+            update_stack(session, rollback_changes)
+            receipt["rolled_back"] = True
+            print("Deployment checks failed; previous versions restored.", flush=True)
+        finally:
+            (LOCAL / "deployment-health.json").write_text(
+                json.dumps(receipt, indent=2) + "\n"
+            )
+        raise RuntimeError("Deployment failed its health checks") from error
+    receipt["status"] = "passed"
+    (LOCAL / "deployment-health.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    print("Deployed website, static assets, API identity, and storage checks passed.")
 
 
 def provision_model_key(session):

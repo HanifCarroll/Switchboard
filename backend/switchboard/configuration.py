@@ -3,9 +3,9 @@
 import os
 from functools import lru_cache
 
-import boto3
 from pydantic import HttpUrl
 
+from switchboard.aws_clients import aws_client
 from switchboard.models import Record, Text
 
 
@@ -18,7 +18,7 @@ class RuntimeSettings(Record):
 def runtime_settings() -> RuntimeSettings:
     parameter = os.getenv("SWITCHBOARD_CONFIG_PARAMETER")
     if parameter:
-        response = boto3.client("ssm").get_parameter(Name=parameter)
+        response = aws_client("ssm").get_parameter(Name=parameter)
         return RuntimeSettings.model_validate_json(response["Parameter"]["Value"])
 
     return RuntimeSettings.model_validate(
@@ -35,7 +35,7 @@ def deepseek_api_key() -> str | None:
     if not parameter:
         return os.getenv("DEEPSEEK_API_KEY")
 
-    response = boto3.client("ssm").get_parameter(Name=parameter, WithDecryption=True)
+    response = aws_client("ssm").get_parameter(Name=parameter, WithDecryption=True)
     value = response["Parameter"]["Value"]
     if not value.strip():
         raise ValueError("The model credential is empty")

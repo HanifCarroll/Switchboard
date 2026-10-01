@@ -31,6 +31,11 @@
         "ProvisionedThroughput": {
           "ReadCapacityUnits": 25,
           "WriteCapacityUnits": 25
+        },
+        "DeletionProtectionEnabled": true,
+        "TimeToLiveSpecification": {
+          "AttributeName": "expires_at",
+          "Enabled": true
         }
       },
       "DeletionPolicy": "Retain",
@@ -276,9 +281,24 @@
                 "SWITCHBOARD_CONFIG_PARAMETER": "/switchboard/live/runtime",
                 "INVESTIGATION_DLQ_URL": {
                   "Ref": "DeadLetters"
+                },
+                "INVESTIGATION_DAILY_LIMIT": {
+                  "Ref": "DailyJobLimit"
+                },
+                "INVESTIGATION_VISITOR_DAILY_LIMIT": {
+                  "Ref": "VisitorDailyJobLimit"
                 }
               }
             },
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        },
+        "ReservedConcurrentExecutions": {
+          "Fn::If": [
+            "ConcurrencyReservations",
+            8,
             {
               "Ref": "AWS::NoValue"
             }
@@ -521,6 +541,15 @@
               "Ref": "AWS::NoValue"
             }
           ]
+        },
+        "ReservedConcurrentExecutions": {
+          "Fn::If": [
+            "ConcurrencyReservations",
+            5,
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
         }
       }
     },
@@ -637,6 +666,15 @@
                 "NEXT_PUBLIC_AUTH_MODE": "demo"
               }
             },
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        },
+        "ReservedConcurrentExecutions": {
+          "Fn::If": [
+            "ConcurrencyReservations",
+            6,
             {
               "Ref": "AWS::NoValue"
             }
@@ -1107,7 +1145,7 @@
         "DashboardName": "switchboard",
         "DashboardBody": {
           "Fn::Sub": [
-            "{\"widgets\": [{\"type\": \"metric\", \"x\": 0, \"y\": 0, \"width\": 24, \"height\": 6, \"properties\": {\"title\": \"Lambda invocations and errors\", \"region\": \"us-east-1\", \"period\": 300, \"stat\": \"Sum\", \"metrics\": [[\"AWS/Lambda\", \"Invocations\", \"FunctionName\", \"switchboard-api\"], [\"AWS/Lambda\", \"Errors\", \"FunctionName\", \"switchboard-api\"], [\"AWS/Lambda\", \"Throttles\", \"FunctionName\", \"switchboard-api\"], [\"AWS/Lambda\", \"Invocations\", \"FunctionName\", \"switchboard-worker\"], [\"AWS/Lambda\", \"Errors\", \"FunctionName\", \"switchboard-worker\"], [\"AWS/Lambda\", \"Throttles\", \"FunctionName\", \"switchboard-worker\"], [\"AWS/Lambda\", \"Invocations\", \"FunctionName\", \"switchboard-website\"], [\"AWS/Lambda\", \"Errors\", \"FunctionName\", \"switchboard-website\"], [\"AWS/Lambda\", \"Throttles\", \"FunctionName\", \"switchboard-website\"], [\"AWS/Lambda\", \"Invocations\", \"FunctionName\", \"switchboard-receiver\"], [\"AWS/Lambda\", \"Errors\", \"FunctionName\", \"switchboard-receiver\"], [\"AWS/Lambda\", \"Throttles\", \"FunctionName\", \"switchboard-receiver\"]]}}, {\"type\": \"metric\", \"x\": 0, \"y\": 6, \"width\": 24, \"height\": 6, \"properties\": {\"title\": \"Lambda duration\", \"region\": \"us-east-1\", \"period\": 300, \"stat\": \"p95\", \"metrics\": [[\"AWS/Lambda\", \"Duration\", \"FunctionName\", \"switchboard-api\"], [\"AWS/Lambda\", \"Duration\", \"FunctionName\", \"switchboard-worker\"], [\"AWS/Lambda\", \"Duration\", \"FunctionName\", \"switchboard-website\"], [\"AWS/Lambda\", \"Duration\", \"FunctionName\", \"switchboard-receiver\"]]}}, {\"type\": \"metric\", \"x\": 0, \"y\": 12, \"width\": 24, \"height\": 6, \"properties\": {\"title\": \"Investigation queues\", \"region\": \"us-east-1\", \"period\": 300, \"stat\": \"Maximum\", \"metrics\": [[\"AWS/SQS\", \"ApproximateNumberOfMessagesVisible\", \"QueueName\", \"switchboard-investigations\"], [\"AWS/SQS\", \"ApproximateNumberOfMessagesNotVisible\", \"QueueName\", \"switchboard-investigations\"], [\"AWS/SQS\", \"ApproximateAgeOfOldestMessage\", \"QueueName\", \"switchboard-investigations\"], [\"AWS/SQS\", \"ApproximateNumberOfMessagesVisible\", \"QueueName\", \"switchboard-failed\"], [\"AWS/SQS\", \"ApproximateNumberOfMessagesNotVisible\", \"QueueName\", \"switchboard-failed\"], [\"AWS/SQS\", \"ApproximateAgeOfOldestMessage\", \"QueueName\", \"switchboard-failed\"]]}}, {\"type\": \"metric\", \"x\": 0, \"y\": 18, \"width\": 24, \"height\": 6, \"properties\": {\"title\": \"DynamoDB capacity and throttling\", \"region\": \"us-east-1\", \"period\": 300, \"stat\": \"Sum\", \"metrics\": [[\"AWS/DynamoDB\", \"ConsumedReadCapacityUnits\", \"TableName\", \"switchboard\"], [\"AWS/DynamoDB\", \"ConsumedWriteCapacityUnits\", \"TableName\", \"switchboard\"], [\"AWS/DynamoDB\", \"ReadThrottleEvents\", \"TableName\", \"switchboard\"], [\"AWS/DynamoDB\", \"WriteThrottleEvents\", \"TableName\", \"switchboard\"]]}}, {\"type\": \"metric\", \"x\": 0, \"y\": 24, \"width\": 24, \"height\": 6, \"properties\": {\"title\": \"Bedrock invocations and tokens\", \"region\": \"us-east-1\", \"period\": 300, \"stat\": \"Sum\", \"metrics\": [[\"AWS/BedrockMantle\", \"Inferences\", \"Model\", \"deepseek.v3.2\"], [\"AWS/BedrockMantle\", \"InferenceClientErrors\", \"Model\", \"deepseek.v3.2\"], [\"AWS/BedrockMantle\", \"TotalInputTokens\", \"Model\", \"deepseek.v3.2\"], [\"AWS/BedrockMantle\", \"TotalOutputTokens\", \"Model\", \"deepseek.v3.2\"], [\"AWS/BedrockMantle\", \"Inferences\", \"Model\", \"openai.gpt-6-luna\"], [\"AWS/BedrockMantle\", \"InferenceClientErrors\", \"Model\", \"openai.gpt-6-luna\"], [\"AWS/BedrockMantle\", \"TotalInputTokens\", \"Model\", \"openai.gpt-6-luna\"], [\"AWS/BedrockMantle\", \"TotalOutputTokens\", \"Model\", \"openai.gpt-6-luna\"]]}}, {\"type\": \"metric\", \"x\": 0, \"y\": 30, \"width\": 24, \"height\": 6, \"properties\": {\"title\": \"Rejected investigations\", \"region\": \"us-east-1\", \"period\": 300, \"stat\": \"Sum\", \"metrics\": [[\"Switchboard\", \"FailedInvestigations\"]]}}, {\"type\": \"metric\", \"x\": 0, \"y\": 36, \"width\": 24, \"height\": 6, \"properties\": {\"title\": \"Change workflows\", \"region\": \"us-east-1\", \"period\": 300, \"stat\": \"Sum\", \"metrics\": [[\"AWS/States\", \"ExecutionsStarted\", \"StateMachineArn\", \"${WorkflowArn}\"], [\"AWS/States\", \"ExecutionsSucceeded\", \"StateMachineArn\", \"${WorkflowArn}\"], [\"AWS/States\", \"ExecutionsFailed\", \"StateMachineArn\", \"${WorkflowArn}\"], [\"AWS/States\", \"ExecutionsTimedOut\", \"StateMachineArn\", \"${WorkflowArn}\"]]}}]}",
+            "{\"widgets\": [{\"type\": \"metric\", \"x\": 0, \"y\": 0, \"width\": 24, \"height\": 6, \"properties\": {\"title\": \"Lambda invocations and errors\", \"region\": \"us-east-1\", \"period\": 300, \"stat\": \"Sum\", \"metrics\": [[\"AWS/Lambda\", \"Invocations\", \"FunctionName\", \"switchboard-api\"], [\"AWS/Lambda\", \"Errors\", \"FunctionName\", \"switchboard-api\"], [\"AWS/Lambda\", \"Throttles\", \"FunctionName\", \"switchboard-api\"], [\"AWS/Lambda\", \"Invocations\", \"FunctionName\", \"switchboard-worker\"], [\"AWS/Lambda\", \"Errors\", \"FunctionName\", \"switchboard-worker\"], [\"AWS/Lambda\", \"Throttles\", \"FunctionName\", \"switchboard-worker\"], [\"AWS/Lambda\", \"Invocations\", \"FunctionName\", \"switchboard-website\"], [\"AWS/Lambda\", \"Errors\", \"FunctionName\", \"switchboard-website\"], [\"AWS/Lambda\", \"Throttles\", \"FunctionName\", \"switchboard-website\"], [\"AWS/Lambda\", \"Invocations\", \"FunctionName\", \"switchboard-receiver\"], [\"AWS/Lambda\", \"Errors\", \"FunctionName\", \"switchboard-receiver\"], [\"AWS/Lambda\", \"Throttles\", \"FunctionName\", \"switchboard-receiver\"]]}}, {\"type\": \"metric\", \"x\": 0, \"y\": 6, \"width\": 24, \"height\": 6, \"properties\": {\"title\": \"Lambda duration\", \"region\": \"us-east-1\", \"period\": 300, \"stat\": \"p95\", \"metrics\": [[\"AWS/Lambda\", \"Duration\", \"FunctionName\", \"switchboard-api\"], [\"AWS/Lambda\", \"Duration\", \"FunctionName\", \"switchboard-worker\"], [\"AWS/Lambda\", \"Duration\", \"FunctionName\", \"switchboard-website\"], [\"AWS/Lambda\", \"Duration\", \"FunctionName\", \"switchboard-receiver\"]]}}, {\"type\": \"metric\", \"x\": 0, \"y\": 12, \"width\": 24, \"height\": 6, \"properties\": {\"title\": \"Investigation queues\", \"region\": \"us-east-1\", \"period\": 300, \"stat\": \"Maximum\", \"metrics\": [[\"AWS/SQS\", \"ApproximateNumberOfMessagesVisible\", \"QueueName\", \"switchboard-investigations\"], [\"AWS/SQS\", \"ApproximateNumberOfMessagesNotVisible\", \"QueueName\", \"switchboard-investigations\"], [\"AWS/SQS\", \"ApproximateAgeOfOldestMessage\", \"QueueName\", \"switchboard-investigations\"], [\"AWS/SQS\", \"ApproximateNumberOfMessagesVisible\", \"QueueName\", \"switchboard-failed\"], [\"AWS/SQS\", \"ApproximateNumberOfMessagesNotVisible\", \"QueueName\", \"switchboard-failed\"], [\"AWS/SQS\", \"ApproximateAgeOfOldestMessage\", \"QueueName\", \"switchboard-failed\"]]}}, {\"type\": \"metric\", \"x\": 0, \"y\": 18, \"width\": 24, \"height\": 6, \"properties\": {\"title\": \"DynamoDB capacity and throttling\", \"region\": \"us-east-1\", \"period\": 300, \"stat\": \"Sum\", \"metrics\": [[\"AWS/DynamoDB\", \"ConsumedReadCapacityUnits\", \"TableName\", \"switchboard\"], [\"AWS/DynamoDB\", \"ConsumedWriteCapacityUnits\", \"TableName\", \"switchboard\"], [\"AWS/DynamoDB\", \"ReadThrottleEvents\", \"TableName\", \"switchboard\"], [\"AWS/DynamoDB\", \"WriteThrottleEvents\", \"TableName\", \"switchboard\"]]}}, {\"type\": \"metric\", \"x\": 0, \"y\": 24, \"width\": 24, \"height\": 6, \"properties\": {\"title\": \"Regional Lambda concurrency\", \"region\": \"us-east-1\", \"period\": 300, \"stat\": \"Maximum\", \"metrics\": [[\"AWS/Lambda\", \"ConcurrentExecutions\"], [\"AWS/Lambda\", \"ClaimedAccountConcurrency\"]]}}, {\"type\": \"metric\", \"x\": 0, \"y\": 30, \"width\": 24, \"height\": 6, \"properties\": {\"title\": \"Rejected investigations\", \"region\": \"us-east-1\", \"period\": 300, \"stat\": \"Sum\", \"metrics\": [[\"Switchboard\", \"FailedInvestigations\"]]}}, {\"type\": \"metric\", \"x\": 0, \"y\": 36, \"width\": 24, \"height\": 6, \"properties\": {\"title\": \"Change workflows\", \"region\": \"us-east-1\", \"period\": 300, \"stat\": \"Sum\", \"metrics\": [[\"AWS/States\", \"ExecutionsStarted\", \"StateMachineArn\", \"${WorkflowArn}\"], [\"AWS/States\", \"ExecutionsSucceeded\", \"StateMachineArn\", \"${WorkflowArn}\"], [\"AWS/States\", \"ExecutionsFailed\", \"StateMachineArn\", \"${WorkflowArn}\"], [\"AWS/States\", \"ExecutionsTimedOut\", \"StateMachineArn\", \"${WorkflowArn}\"]]}}]}",
             {
               "WorkflowArn": {
                 "Ref": "Workflow"
@@ -1266,7 +1304,13 @@
         },
         "BatchSize": 1,
         "MaximumBatchingWindowInSeconds": 0,
-        "Enabled": true,
+        "Enabled": {
+          "Fn::If": [
+            "BootstrapWorker",
+            false,
+            true
+          ]
+        },
         "ScalingConfig": {
           "MaximumConcurrency": 2
         }
@@ -1346,6 +1390,61 @@
               "SampledRequestsEnabled": false,
               "CloudWatchMetricsEnabled": false,
               "MetricName": "switchboard-api-limit"
+            }
+          },
+          {
+            "Name": "LimitInvestigationSubmissions",
+            "Priority": 1,
+            "Statement": {
+              "RateBasedStatement": {
+                "Limit": 20,
+                "EvaluationWindowSec": 300,
+                "AggregateKeyType": "IP",
+                "ScopeDownStatement": {
+                  "AndStatement": {
+                    "Statements": [
+                      {
+                        "ByteMatchStatement": {
+                          "SearchString": "/api/investigations",
+                          "FieldToMatch": {
+                            "UriPath": {}
+                          },
+                          "PositionalConstraint": "EXACTLY",
+                          "TextTransformations": [
+                            {
+                              "Priority": 0,
+                              "Type": "NONE"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "ByteMatchStatement": {
+                          "SearchString": "POST",
+                          "FieldToMatch": {
+                            "Method": {}
+                          },
+                          "PositionalConstraint": "EXACTLY",
+                          "TextTransformations": [
+                            {
+                              "Priority": 0,
+                              "Type": "NONE"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "Action": {
+              "Block": {}
+            },
+            "VisibilityConfig": {
+              "SampledRequestsEnabled": false,
+              "CloudWatchMetricsEnabled": false,
+              "MetricName": "switchboard-job-limit"
             }
           }
         ],
@@ -1704,6 +1803,15 @@
                 }
               }
             },
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        },
+        "ReservedConcurrentExecutions": {
+          "Fn::If": [
+            "ConcurrencyReservations",
+            2,
             {
               "Ref": "AWS::NoValue"
             }
@@ -2235,7 +2343,7 @@
           ]
         },
         "Code": {
-          "ZipFile": "import json\nimport os\nfrom datetime import datetime, timezone\nfrom urllib.parse import quote\n\nimport boto3\n\nTITLES = {\n    \"switchboard-APIErrors\": \"An API request failed\",\n    \"switchboard-WorkerErrors\": \"An investigation needs a retry\",\n    \"switchboard-WebsiteErrors\": \"The website returned an error\",\n    \"switchboard-ReceiverErrors\": \"The delivery receiver returned an error\",\n    \"switchboard-QueueBacklog\": \"Investigations are waiting too long\",\n    \"switchboard-DeadLetterJobs\": \"An investigation exhausted its retries\",\n    \"switchboard-RejectedJobs\": \"An investigation was rejected\",\n    \"switchboard-WorkflowFailures\": \"A change workflow failed\",\n    \"switchboard-WorkflowTimeouts\": \"A change workflow timed out\",\n}\n\n\ndef handler(event, context):\n    for record in event[\"Records\"]:\n        # 1. Read the alarm metadata without forwarding the raw metric payload.\n        alarm = json.loads(record[\"Sns\"][\"Message\"])\n        name = alarm[\"AlarmName\"]\n        title = TITLES.get(name, \"An operational alert needs review\")\n        detected = datetime.fromisoformat(alarm[\"StateChangeTime\"]).astimezone(\n            timezone.utc\n        )\n\n        # 2. Describe the problem and link directly to investigation steps.\n        preview = alarm.get(\"TestNotification\", False)\n        heading = (\n            \"Formatting preview: no new failure was detected.\"\n            if preview\n            else \"Switchboard needs attention\"\n        )\n        link = (\n            \"https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1\"\n            \"#alarmsV2:alarm/\" + quote(name, safe=\"\")\n        )\n        message = (\n            heading\n            + \"\\n\\n\"\n            + title\n            + \"\\n\\n\"\n            + alarm[\"AlarmDescription\"]\n            + \"\\n\\n\"\n            + \"Detected: \"\n            + detected.strftime(\"%d %b %Y, %H:%M UTC\")\n            + \"\\n\\n\"\n            + \"Open the alarm:\\n\"\n            + link\n            + \"\\n\\n\"\n            + \"Troubleshooting guide:\\n\"\n            + \"https://github.com/HanifCarroll/b2b-saas-internal-agent/blob/main/aws/README.md\"\n        )\n\n        # 3. Deliver through the existing confirmed email subscription.\n        boto3.client(\"sns\").publish(\n            TopicArn=os.environ[\"ALERTS_TOPIC_ARN\"],\n            Subject=(\"TEST \u2014 \" if preview else \"\") + \"Switchboard: \" + title,\n            Message=message,\n        )\n    return {\"formatted\": len(event[\"Records\"])}\n"
+          "ZipFile": "import json\nimport os\nfrom datetime import datetime, timezone\nfrom urllib.parse import quote\n\nimport boto3\n\nsns = boto3.client(\"sns\")\n\nTITLES = {\n    \"switchboard-Throttles\": \"Traffic exceeded available capacity\",\n    \"switchboard-APIErrors\": \"An API request failed\",\n    \"switchboard-WorkerErrors\": \"An investigation needs a retry\",\n    \"switchboard-WebsiteErrors\": \"The website returned an error\",\n    \"switchboard-ReceiverErrors\": \"The delivery receiver returned an error\",\n    \"switchboard-QueueBacklog\": \"Investigations are waiting too long\",\n    \"switchboard-DeadLetterJobs\": \"An investigation exhausted its retries\",\n    \"switchboard-RejectedJobs\": \"An investigation was rejected\",\n    \"switchboard-WorkflowFailures\": \"A change workflow failed\",\n    \"switchboard-WorkflowTimeouts\": \"A change workflow timed out\",\n}\n\n\ndef handler(event, context):\n    for record in event[\"Records\"]:\n        # 1. Read the alarm metadata without forwarding the raw metric payload.\n        alarm = json.loads(record[\"Sns\"][\"Message\"])\n        name = alarm[\"AlarmName\"]\n        title = TITLES.get(name, \"An operational alert needs review\")\n        detected = datetime.fromisoformat(alarm[\"StateChangeTime\"]).astimezone(\n            timezone.utc\n        )\n\n        # 2. Describe the problem and link directly to investigation steps.\n        preview = alarm.get(\"TestNotification\", False)\n        heading = (\n            \"Formatting preview: no new failure was detected.\"\n            if preview\n            else \"Switchboard needs attention\"\n        )\n        link = (\n            \"https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1\"\n            \"#alarmsV2:alarm/\" + quote(name, safe=\"\")\n        )\n        message = (\n            heading\n            + \"\\n\\n\"\n            + title\n            + \"\\n\\n\"\n            + alarm[\"AlarmDescription\"]\n            + \"\\n\\n\"\n            + \"Detected: \"\n            + detected.strftime(\"%d %b %Y, %H:%M UTC\")\n            + \"\\n\\n\"\n            + \"Open the alarm:\\n\"\n            + link\n            + \"\\n\\n\"\n            + \"Troubleshooting guide:\\n\"\n            + \"https://github.com/HanifCarroll/b2b-saas-internal-agent/blob/main/aws/README.md\"\n        )\n\n        # 3. Deliver through the existing confirmed email subscription.\n        sns.publish(\n            TopicArn=os.environ[\"ALERTS_TOPIC_ARN\"],\n            Subject=(\"TEST \u2014 \" if preview else \"\") + \"Switchboard: \" + title,\n            Message=message,\n        )\n    return {\"formatted\": len(event[\"Records\"])}\n"
         },
         "Environment": {
           "Variables": {
@@ -2253,6 +2361,15 @@
         },
         "TracingConfig": {
           "Mode": "Active"
+        },
+        "ReservedConcurrentExecutions": {
+          "Fn::If": [
+            "ConcurrencyReservations",
+            1,
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
         }
       }
     },
@@ -2394,6 +2511,26 @@
             }
           ]
         }
+      }
+    },
+    "ThrottlesAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": "switchboard-Throttles",
+        "AlarmDescription": "Lambda rejected work because concurrency was exhausted. Check account capacity and function reservations in the operations guide.",
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Throttles",
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "AlarmEvents"
+          }
+        ]
       }
     }
   },
@@ -2561,6 +2698,29 @@
       "Default": "bootstrap",
       "AllowedPattern": "bootstrap|[0-9]+",
       "Description": "Published website version promoted by the release command."
+    },
+    "DailyJobLimit": {
+      "Type": "Number",
+      "Default": 100,
+      "MinValue": 1,
+      "MaxValue": 1000,
+      "Description": "Maximum new demo investigations per UTC day."
+    },
+    "VisitorDailyJobLimit": {
+      "Type": "Number",
+      "Default": 10,
+      "MinValue": 1,
+      "MaxValue": 1000,
+      "Description": "Maximum new investigations per visitor per UTC day."
+    },
+    "ReserveConcurrency": {
+      "Type": "String",
+      "Default": "disabled",
+      "AllowedValues": [
+        "enabled",
+        "disabled"
+      ],
+      "Description": "Enable function reservations after raising the Lambda quota."
     }
   },
   "Conditions": {
@@ -2630,6 +2790,14 @@
           "Ref": "WebsiteVersion"
         },
         "bootstrap"
+      ]
+    },
+    "ConcurrencyReservations": {
+      "Fn::Equals": [
+        {
+          "Ref": "ReserveConcurrency"
+        },
+        "enabled"
       ]
     }
   }

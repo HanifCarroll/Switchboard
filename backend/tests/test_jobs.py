@@ -2,6 +2,8 @@
 
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import boto3
@@ -14,7 +16,7 @@ from switchboard.investigation.report_validation import (
     EmptyModelResponseError,
     ReportValidationError,
 )
-from switchboard.jobs import process_message, read, submit
+from switchboard.jobs import fail, process_message, read, submit
 from switchboard.maintenance import maintain
 from switchboard.storage import StorageError, WorkspaceStorage
 from tests import test_dynamodb
@@ -73,6 +75,83 @@ def test_submission_delivery_terminal_duplicate_and_access(queued):
     with pytest.raises(PermissionError):
         read(storage=storage, employee_id="emp-priya", run_id=job.run_id)
     assert submit_job(storage, sqs).run_id != job.run_id
+
+
+def test_daily_allowance_preserves_retries_and_cannot_be_reset_by_a_visitor(
+    queued, monkeypatch
+):
+    storage, sqs, queue, _ = queued
+    monkeypatch.setenv("INVESTIGATION_DAILY_LIMIT", "100")
+    monkeypatch.setenv("INVESTIGATION_VISITOR_DAILY_LIMIT", "1")
+
+    request_key = uuid4()
+    job = submit_job(storage, sqs, request_key)
+    assert submit_job(storage, sqs, request_key).run_id == job.run_id
+    assert submit_job(storage, sqs).run_id == job.run_id
+    process_message(message(storage, job.run_id))
+    assert submit_job(storage, sqs, request_key).run_id == job.run_id
+
+    with pytest.raises(StorageError) as denied:
+        submit_job(storage, sqs, ticket="CHG-1045")
+    assert denied.value.status == 429
+    assert not storage.transport.query(
+        storage.transport.partition(storage.workspace_id), "JOBHISTORY#CHG-1045"
+    )
+    assert len(sqs.receive_message(QueueUrl=queue)["Messages"]) == 1
+
+    initialize_demo_portfolio(storage=storage)
+    with pytest.raises(StorageError) as reset_denied:
+        submit_job(storage, sqs)
+    assert reset_denied.value.status == 429
+
+
+def test_global_allowance_is_atomic_across_visitors_and_rolls_over_at_utc_midnight(
+    queued, monkeypatch
+):
+    first, sqs, _, _ = queued
+    monkeypatch.setenv("INVESTIGATION_DAILY_LIMIT", "1")
+    monkeypatch.setenv("INVESTIGATION_VISITOR_DAILY_LIMIT", "10")
+    second = WorkspaceStorage(
+        str(uuid4()),
+        transport=DynamoStore(first.transport.table, first.transport.client),
+    )
+    initialize_demo_portfolio(storage=second)
+
+    def try_submit(storage):
+        try:
+            return submit_job(storage, sqs)
+        except StorageError as error:
+            assert error.status == 429
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(try_submit, [first, second]))
+    assert sum(result is not None for result in results) == 1
+    day = datetime.now(timezone.utc).date().isoformat()
+    counter = first.transport.client.get_item(
+        TableName=first.transport.table,
+        Key={"PK": {"S": "USAGE"}, "SK": {"S": day}},
+        ConsistentRead=True,
+    )["Item"]
+    assert counter["count"]["N"] == "1"
+    assert int(counter["expires_at"]["N"]) > time.time()
+
+    winner = first if results[0] is not None else second
+    winner_job = results[0] or results[1]
+    assert winner_job is not None
+    saved = winner.transport.get(
+        winner.transport.partition(winner.workspace_id), f"JOB#{winner_job.run_id}"
+    )
+    fail(winner, saved, "Test completed")
+    future = datetime.now(timezone.utc) + timedelta(days=1)
+
+    class Tomorrow(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return future
+
+    monkeypatch.setattr("switchboard.jobs.datetime", Tomorrow)
+    assert submit_job(winner, sqs).run_id != winner_job.run_id
 
 
 def test_save_before_send_failure_and_hourly_recovery(queued):

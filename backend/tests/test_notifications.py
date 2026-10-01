@@ -13,10 +13,10 @@ def test_operational_email_has_a_clear_subject_summary_and_links(monkeypatch):
     )
     source = template["Resources"]["Notifications"]["Properties"]["Code"]["ZipFile"]
     namespace = {}
-    exec(compile(source, "notification_inline", "exec"), namespace)
     client = Mock()
-    monkeypatch.setenv("ALERTS_TOPIC_ARN", "arn:aws:sns:us-east-1:123456789012:alerts")
     monkeypatch.setattr("boto3.client", lambda name: client)
+    exec(compile(source, "notification_inline", "exec"), namespace)
+    monkeypatch.setenv("ALERTS_TOPIC_ARN", "arn:aws:sns:us-east-1:123456789012:alerts")
     alarm = {
         "AlarmName": "switchboard-WorkflowFailures",
         "AlarmDescription": template["Resources"]["WorkflowFailuresAlarm"][

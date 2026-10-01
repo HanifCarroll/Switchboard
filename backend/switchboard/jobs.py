@@ -8,11 +8,11 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 from pydantic import BaseModel
 
-from switchboard.dynamodb import DynamoStore, encode
+from switchboard.aws_clients import aws_client
+from switchboard.dynamodb import DynamoStore, encode, key
 from switchboard.integrations.employee_directory import EmployeeSession
 from switchboard.integrations.support_desk import get_ticket
 from switchboard.investigation.runs import (
@@ -44,7 +44,63 @@ def database(storage: WorkspaceStorage) -> DynamoStore:
 
 
 def queue_client():
-    return boto3.client("sqs")
+    return aws_client("sqs")
+
+
+def daily_allowances(store: DynamoStore, workspace_id: str) -> list[dict]:
+    """Charge a new job atomically with its records; retries cost no allowance."""
+    today = datetime.now(timezone.utc).date()
+    operations = []
+    for partition, setting in [
+        ("USAGE", "INVESTIGATION_DAILY_LIMIT"),
+        (f"USAGE#{workspace_id}", "INVESTIGATION_VISITOR_DAILY_LIMIT"),
+    ]:
+        limit = int(os.getenv(setting, "0"))
+        if limit <= 0:
+            continue
+
+        operations.append(
+            {
+                "Update": {
+                    "TableName": store.table,
+                    "Key": key(partition, today.isoformat()),
+                    "UpdateExpression": "SET expires_at = :expires ADD #count :one",
+                    "ConditionExpression": "attribute_not_exists(#count) OR #count < :limit",
+                    "ExpressionAttributeNames": {"#count": "count"},
+                    "ExpressionAttributeValues": {
+                        ":one": {"N": "1"},
+                        ":limit": {"N": str(limit)},
+                        ":expires": {
+                            "N": str(
+                                int(
+                                    datetime.combine(
+                                        today, datetime.min.time(), timezone.utc
+                                    ).timestamp()
+                                )
+                                + 3 * 86400
+                            )
+                        },
+                    },
+                }
+            }
+        )
+    return operations
+
+
+def require_daily_capacity(store: DynamoStore, allowances: list[dict]):
+    """Explain a canceled transaction without rejecting an idempotent retry."""
+    for operation in allowances:
+        update = operation["Update"]
+        response = store.client.get_item(
+            TableName=store.table, Key=update["Key"], ConsistentRead=True
+        )
+        used = int(response.get("Item", {}).get("count", {}).get("N", "0"))
+        limit = int(update["ExpressionAttributeValues"][":limit"]["N"])
+        if used >= limit:
+            raise StorageError(
+                "The demo's daily investigation limit has been reached. Try again tomorrow (UTC).",
+                status=429,
+            )
 
 
 def authorize(storage: WorkspaceStorage, job: dict) -> None:
@@ -104,6 +160,7 @@ def submit(
     existing_id = pointer["id"] if pointer else store.get(partition, active_key)
     job = store.get(partition, f"JOB#{existing_id}") if existing_id else None
     if job is None:
+        allowances = daily_allowances(store, storage.workspace_id)
         identifier = str(uuid4())
         job = {
             "id": identifier,
@@ -137,6 +194,7 @@ def submit(
                         f"JOBHISTORY#{ticket_id}#{job['created_at']}#{identifier}",
                         identifier,
                     ),
+                    *allowances,
                 ],
             )
         except StorageError as error:
@@ -147,6 +205,8 @@ def submit(
                 ) from None
             identifier = pointer["id"] if pointer else store.get(partition, active_key)
             job = store.get(partition, f"JOB#{identifier}") if identifier else None
+            if error.status == 409 and not job:
+                require_daily_capacity(store, allowances)
             if error.status != 409 or not job:
                 raise
     if not pointer:

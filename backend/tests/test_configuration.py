@@ -2,7 +2,9 @@
 
 from unittest.mock import Mock
 
+from switchboard.aws_clients import aws_client
 from switchboard.configuration import deepseek_api_key, runtime_settings
+from switchboard.dynamodb import DynamoStore
 
 
 def test_parameter_settings_and_encrypted_key_are_cached_independently(monkeypatch):
@@ -17,7 +19,7 @@ def test_parameter_settings_and_encrypted_key_are_cached_independently(monkeypat
         },
         {"Parameter": {"Value": "test-secret"}},
     ]
-    monkeypatch.setattr("switchboard.configuration.boto3.client", lambda name: client)
+    monkeypatch.setattr("switchboard.configuration.aws_client", lambda name: client)
     assert runtime_settings().receiver_url is not None
     client.get_parameter.assert_called_once_with(Name="/switchboard/live/runtime")
     assert deepseek_api_key() == deepseek_api_key() == "test-secret"
@@ -25,3 +27,18 @@ def test_parameter_settings_and_encrypted_key_are_cached_independently(monkeypat
     client.get_parameter.assert_called_with(
         Name="/switchboard/live/deepseek-api-key", WithDecryption=True
     )
+
+
+def test_connections_are_reused_without_sharing_workspace_state(monkeypatch):
+    factory = Mock(return_value=Mock())
+    monkeypatch.setattr("switchboard.aws_clients.boto3.client", factory)
+    first = DynamoStore("switchboard")
+    second = DynamoStore("switchboard")
+    assert first.client is second.client is aws_client("dynamodb")
+    assert factory.call_count == 1
+    first.generations["visitor"] = "generation-one"
+    first.staging.add("visitor")
+    first.lease = {"id": "first-request"}
+    assert second.generations == {}
+    assert second.staging == set()
+    assert second.lease is None

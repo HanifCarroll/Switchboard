@@ -649,12 +649,7 @@
                 {
                   "Effect": "Allow",
                   "Action": "pricingplanmanager:GetSubscription",
-                  "Resource": {
-                    "Fn::GetAtt": [
-                      "DeliveryPlan",
-                      "Arn"
-                    ]
-                  }
+                  "Resource": "*"
                 },
                 {
                   "Effect": "Allow",

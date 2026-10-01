@@ -4,12 +4,6 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      component:
-        type: choice
-        options: [all, backend, website]
-        default: all
-        description: Component to release
 
 permissions:
   contents: read
@@ -58,8 +52,13 @@ jobs:
           uv run pyright
           uv run pytest -v
           uv run ruff check ../scripts/aws.py ../scripts/verify_aws.py
-          uv run ruff format --check ../scripts/aws.py ../scripts/verify_aws.py
-          uv run pyright --project . ../scripts/aws.py ../scripts/verify_aws.py
+          uv run ruff check ../scripts/sam_artifacts.py
+          uv run ruff format --check ../scripts/aws.py ../scripts/verify_aws.py ../scripts/sam_artifacts.py
+          uv run pyright --project . ../scripts/aws.py ../scripts/verify_aws.py ../scripts/sam_artifacts.py
+
+      - name: Validate infrastructure
+        working-directory: backend
+        run: uvx cfn-lint==1.53.3 --registry-schemas ../aws/schemas --regions us-east-1 --template ../aws/template.yml
 
       - name: Check frontend
         working-directory: frontend
@@ -96,19 +95,21 @@ jobs:
         working-directory: backend
       - run: npm ci
         working-directory: frontend
+      - name: Set up SAM
+        uses: aws-actions/setup-sam@v2
+        with:
+          version: 1.166.2
       - name: Assume repository-scoped deployment role
         uses: aws-actions/configure-aws-credentials@v6.3.0
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: us-east-1
-      - name: Build direct-upload ZIPs and retain previous website assets
-        env:
-          COMPONENT: ${{ inputs.component || 'all' }}
-        run: uv run --project backend python scripts/aws.py build --component "$COMPONENT"
-      - name: Publish, check live deployment, and roll back on failure
-        env:
-          COMPONENT: ${{ inputs.component || 'all' }}
-        run: uv run --project backend python scripts/aws.py release --component "$COMPONENT"
+      - name: Build with SAM and retain previous website assets
+        working-directory: backend
+        run: uv run python ../scripts/aws.py build
+      - name: Deploy with SAM, check live application, and roll back on failure
+        working-directory: backend
+        run: uv run python ../scripts/aws.py release
       - name: Save release receipts
         if: always()
         uses: actions/upload-artifact@v7
@@ -116,6 +117,6 @@ jobs:
           name: aws-release-receipts
           path: |
             aws/local/packaging.json
-            aws/local/previous-aliases.json
-            aws/local/previous-runtime.json
+            aws/local/previous-template.yml
+            aws/local/previous-deployment.json
             aws/local/deployment-health.json

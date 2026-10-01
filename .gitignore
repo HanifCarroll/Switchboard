@@ -9,5 +9,6 @@ __pycache__/
 backend/data/local/
 
 .aws-build/
+.aws-sam/
 .aws-build-requirements.txt
 aws/local/

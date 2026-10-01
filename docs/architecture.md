@@ -79,7 +79,7 @@ Key implementation: [DynamoDB operations](../backend/switchboard/dynamodb.py), [
 
 ## Configuration and infrastructure
 
-CloudFormation defines the hosting and protected origins, CloudFront subscription, queues and worker connection, hourly schedule, state machine, shared configuration parameter, and monitoring. Lambda handlers, environment variables, layers, and all live aliases are stack-owned. Code releases upload ZIPs directly, publish immutable versions, and promote the selected aliases through stack parameters. API, worker, and website aliases support independent application releases.
+CloudFormation defines the hosting and protected origins, CloudFront subscription, queues and worker connection, hourly schedule, state machine, shared configuration parameter, and monitoring. Lambda handlers, environment variables, layers, and all live aliases are stack-owned. SAM builds and uploads the application packages, publishes immutable versions, and promotes the live aliases through CloudFormation. Each deployment builds the full application, preserves runtime parameters, and checks live website and API behavior before recording success. Failed health checks restore the previous deployment.
 
 Runtime settings come from a cached Standard Parameter Store entry. The worker obtains its direct-provider credential from a separate SecureString parameter encrypted with the AWS-managed SSM key. API, website, and receiver roles cannot read that credential. SecureString is supplied separately because CloudFormation does not support creating that parameter type. Values are refreshed when a new function version starts.
 

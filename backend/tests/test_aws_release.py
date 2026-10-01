@@ -1,15 +1,13 @@
-"""Releases promote CloudFormation aliases only after successful publication."""
+"""SAM releases preserve runtime settings and recover from unhealthy deployments."""
 
 import importlib.util
 import io
 import json
-import sys
+from collections import OrderedDict
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-import yaml
-from botocore.exceptions import ClientError
 
 spec = importlib.util.spec_from_file_location(
     "aws_release", Path(__file__).resolve().parents[2] / "scripts" / "aws.py"
@@ -17,37 +15,6 @@ spec = importlib.util.spec_from_file_location(
 assert spec is not None and spec.loader is not None
 aws = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(aws)
-
-
-def test_provision_uploads_yaml_as_equivalent_json_within_cloudformation_limit(
-    monkeypatch,
-):
-
-    # 1. Supply deployment clients without making AWS requests.
-    session = Mock()
-    cloudformation = Mock()
-    functions = Mock()
-    session.client.side_effect = lambda name: {
-        "cloudformation": cloudformation,
-        "lambda": functions,
-    }[name]
-    functions.get_account_settings.return_value = {
-        "AccountLimit": {"ConcurrentExecutions": 1000}
-    }
-    monkeypatch.setattr(aws, "provision_model_key", lambda session: None)
-    update = Mock()
-    monkeypatch.setattr(aws, "update_stack", update)
-
-    aws.provision(session)
-
-    # 2. Check the uploaded content, size, and a runtime role reference.
-    body = update.call_args.kwargs["template"]
-    template = yaml.safe_load((aws.ROOT / "aws" / "template.yml").read_text())
-    assert json.loads(body) == template
-    assert len(body.encode("utf-8")) <= 51200
-    assert template["Resources"]["API"]["Properties"]["Role"] == {
-        "Fn::GetAtt": ["APIRole", "Arn"]
-    }
 
 
 @pytest.mark.parametrize("employee_id", ["emp-alex", "wrong-identity"])
@@ -77,33 +44,20 @@ def test_live_smoke_check_rejects_a_healthy_website_with_a_broken_api(
             aws.smoke_check(Mock())
 
 
-@pytest.mark.parametrize(
-    "publication_fails,health_fails", [(False, False), (True, False), (False, True)]
-)
-def test_website_release_preserves_other_components_and_configuration(
-    tmp_path, monkeypatch, publication_fails, health_fails
+@pytest.mark.parametrize("health_fails", [False, True])
+def test_sam_release_preserves_runtime_and_restores_previous_template(
+    tmp_path, monkeypatch, health_fails
 ):
-    monkeypatch.setattr(aws, "BUILD", tmp_path)
     monkeypatch.setattr(aws, "LOCAL", tmp_path)
-    (tmp_path / "website.zip").write_bytes(b"website package")
     session = Mock()
-    cloudformation = Mock()
-    functions = Mock()
-    session.client.side_effect = lambda name: {
-        "cloudformation": cloudformation,
-        "lambda": functions,
-    }[name]
+    client = session.client.return_value
     parameters = {
-        "RuntimeReady": "live",
         "ModelProvider": "bedrock",
-        "BedrockModel": "openai.gpt-6-luna",
-        "APIVersion": "20",
-        "WorkerVersion": "19",
-        "ReceiverVersion": "9",
-        "WebsiteVersion": "15",
+        "BedrockModel": "minimax.minimax-m2.5",
         "AlertEmail": "operator@example.com",
+        "DailyJobLimit": "100",
     }
-    cloudformation.describe_stacks.return_value = {
+    client.describe_stacks.return_value = {
         "Stacks": [
             {
                 "Parameters": [
@@ -113,87 +67,72 @@ def test_website_release_preserves_other_components_and_configuration(
             }
         ]
     }
-    no_changes = ClientError(
-        {
-            "Error": {
-                "Code": "ValidationError",
-                "Message": "No updates are to be performed.",
-            }
+    template = {
+        "Resources": {
+            "Worker": {"Properties": {"CodeUri": "s3://artifacts/previous-worker"}}
         },
-        "UpdateStack",
-    )
-    cloudformation.update_stack.side_effect = [no_changes, {}, {}]
-    health = Mock(side_effect=RuntimeError("API unavailable") if health_fails else None)
-    monkeypatch.setattr(aws, "smoke_check", health)
-    functions.get_alias.return_value = {"FunctionVersion": "15"}
-    functions.get_account_settings.return_value = {
-        "AccountLimit": {"ConcurrentExecutions": 10}
+        "Transform": ["AWS::LanguageExtensions", "AWS::Serverless-2016-10-31"],
     }
-    functions.publish_version.return_value = {"Version": "16"}
-    if publication_fails:
-        functions.publish_version.side_effect = RuntimeError("Publication failed")
-        with pytest.raises(RuntimeError, match="Publication failed"):
-            aws.release(session, "website")
-    elif health_fails:
-        with pytest.raises(RuntimeError, match="health checks"):
-            aws.release(session, "website")
+    client.get_template.return_value = {"TemplateBody": OrderedDict(template)}
+    deploy = Mock()
+    monkeypatch.setattr(aws, "deploy_template", deploy)
+    health = Mock(
+        side_effect=[RuntimeError("API unavailable"), None] if health_fails else None
+    )
+    monkeypatch.setattr(aws, "smoke_check", health)
+    if health_fails:
+        with pytest.raises(RuntimeError, match="SAM deployment failed"):
+            aws.release(session, model_provider="deepseek")
     else:
-        aws.release(session, "website")
-
-    functions.update_function_code.assert_called_once_with(
-        FunctionName="switchboard-website", ZipFile=b"website package"
+        aws.release(session)
+    assert (
+        json.loads((tmp_path / "previous-deployment.json").read_text())["parameters"]
+        == parameters
     )
-    functions.update_function_configuration.assert_not_called()
-    functions.update_alias.assert_not_called()
-    functions.create_alias.assert_not_called()
-    calls = cloudformation.update_stack.call_args_list
-    assert len(calls) == (1 if publication_fails else 3 if health_fails else 2)
-    if not publication_fails:
-        health.assert_called_once_with(session)
-        promotion = calls[1].kwargs
-        assert promotion["UsePreviousTemplate"] is True
-        assert promotion["Parameters"] == [
-            {"ParameterKey": key, "UsePreviousValue": True}
-            for key in parameters
-            if key != "WebsiteVersion"
-        ] + [{"ParameterKey": "WebsiteVersion", "ParameterValue": "16"}]
-        receipt = json.loads((tmp_path / "deployment-health.json").read_text())
-        if health_fails:
-            restored = {
-                item["ParameterKey"]: item["ParameterValue"]
-                for item in calls[-1].kwargs["Parameters"]
-                if "ParameterValue" in item
-            }
-            assert restored == {"WebsiteVersion": "15", "RuntimeReady": "live"}
-            assert receipt["rolled_back"] is True
-            assert receipt["status"] == "failed"
-        else:
-            assert receipt["status"] == "passed"
+    assert json.loads((tmp_path / "previous-template.yml").read_text()) == template
+    receipt = json.loads((tmp_path / "deployment-health.json").read_text())
+    if health_fails:
+        assert deploy.call_count == 2
+        assert deploy.call_args.args == (
+            session,
+            tmp_path / "previous-template.yml",
+            parameters,
+        )
+        assert receipt["rolled_back"] is True
+        assert receipt["status"] == "failed"
+    else:
+        assert deploy.call_count == 1
+        assert deploy.call_args.args == (session, aws.BUILD / "template.yaml", {})
+        assert receipt["status"] == "passed"
+    client.update_stack.assert_not_called()
 
 
-def test_backend_rollback_restores_versions_and_model_settings(tmp_path, monkeypatch):
+def test_failed_rollback_is_reported_and_release_stays_failed(tmp_path, monkeypatch):
     monkeypatch.setattr(aws, "LOCAL", tmp_path)
-    previous = {"api": "20", "worker": "19", "receiver": "9", "website": "15"}
-    (tmp_path / "previous-aliases.json").write_text(json.dumps(previous))
-    (tmp_path / "previous-runtime.json").write_text(
-        json.dumps({"ModelProvider": "deepseek", "BedrockModel": "deepseek.v3.2"})
-    )
-    monkeypatch.setattr(sys, "argv", ["aws.py", "rollback", "--component", "backend"])
     session = Mock()
-    monkeypatch.setattr(aws.boto3, "Session", Mock(return_value=session))
-    update = Mock()
-    monkeypatch.setattr(aws, "update_stack", update)
-
-    aws.main()
-
-    update.assert_called_once_with(
-        session,
-        {
-            "APIVersion": "20",
-            "WorkerVersion": "19",
-            "ReceiverVersion": "9",
-            "ModelProvider": "deepseek",
-            "BedrockModel": "deepseek.v3.2",
-        },
+    session.client.return_value.describe_stacks.return_value = {
+        "Stacks": [{"Parameters": []}]
+    }
+    session.client.return_value.get_template.return_value = {
+        "TemplateBody": {"Resources": {}}
+    }
+    monkeypatch.setattr(
+        aws, "deploy_template", Mock(side_effect=RuntimeError("AWS denied deployment"))
     )
-    session.client.assert_not_called()
+    with pytest.raises(RuntimeError, match="SAM deployment failed"):
+        aws.release(session)
+    receipt = json.loads((tmp_path / "deployment-health.json").read_text())
+    assert receipt["status"] == "failed" and receipt["rolled_back"] is False
+    assert "AWS denied" in receipt["rollback_error"]
+
+
+def test_sam_uses_root_configuration_for_nested_templates(monkeypatch):
+    run = Mock()
+    monkeypatch.setattr(aws.subprocess, "run", run)
+    session = Mock(profile_name="hc-studio")
+    aws.sam(["deploy", "--template-file", str(aws.BUILD / "template.yaml")], session)
+    command = run.call_args.args[0]
+    assert command[command.index("--config-file") + 1] == str(
+        aws.ROOT / "samconfig.toml"
+    )
+    assert command[-2:] == ["--profile", "hc-studio"]

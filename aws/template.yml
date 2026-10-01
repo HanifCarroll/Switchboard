@@ -1,6 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: Switchboard hosting, controlled webhook delivery, change workflows, configuration, storage,
   queues, and observability.
+Transform: ['AWS::LanguageExtensions', 'AWS::Serverless-2016-10-31']
 Resources:
   Database:
     Type: AWS::DynamoDB::Table
@@ -67,7 +68,8 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource:
-                  Fn::Sub: arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/switchboard-api:*
+                  Fn::Sub:
+                    arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/switchboard-api:*
               - Effect: Allow
                 Action:
                   - dynamodb:GetItem
@@ -108,7 +110,8 @@ Resources:
               - Effect: Allow
                 Action: states:StartExecution
                 Resource:
-                  Fn::Sub: arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:switchboard-change-workflow
+                  Fn::Sub:
+                    arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:switchboard-change-workflow
               - Effect: Allow
                 Action: lambda:InvokeFunctionUrl
                 Resource:
@@ -124,17 +127,13 @@ Resources:
                   Bool:
                     lambda:InvokedViaFunctionUrl: 'true'
   API:
-    Type: AWS::Lambda::Function
+    Type: AWS::Serverless::Function
     Properties:
       FunctionName: switchboard-api
       Role:
         Fn::GetAtt: [APIRole, Arn]
       Runtime: python3.12
-      Handler:
-        Fn::If:
-          - LiveRuntime
-          - switchboard.lambda_handler.handler
-          - index.handler
+      Handler: switchboard.lambda_handler.handler
       Timeout: 120
       MemorySize: 512
       Architectures:
@@ -144,50 +143,43 @@ Resources:
         LogGroup:
           Ref: APILogs
         ApplicationLogLevel: INFO
-      Code:
-        ZipFile: |-
-          def handler(event, context):
-              return {"statusCode":503,"body":"Deployment pending"}
-      TracingConfig:
-        Mode: Active
-      Layers:
-        Fn::If:
-          - LiveRuntime
-          - - arn:aws:lambda:us-east-1:901920570463:layer:aws-otel-python-amd64-ver-1-32-0:7
-          - Ref: AWS::NoValue
+      Layers: ['arn:aws:lambda:us-east-1:901920570463:layer:aws-otel-python-amd64-ver-1-32-0:7']
       Environment:
-        Fn::If:
-          - LiveRuntime
-          - Variables:
-              DYNAMODB_TABLE:
-                Ref: Database
-              SWITCHBOARD_AUTH_MODE: demo
-              SWITCHBOARD_RUNTIME: aws
-              SWITCHBOARD_INVESTIGATION_MODE: live
-              LANGCHAIN_TRACING_V2: 'false'
-              LANGSMITH_TRACING: 'false'
-              AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-instrument
-              OTEL_SERVICE_NAME: switchboard-api
-              OTEL_METRICS_EXPORTER: none
-              OTEL_LOGS_EXPORTER: none
-              OTEL_PYTHON_DISABLED_INSTRUMENTATIONS: fastapi,httpx,requests,urllib,urllib3
-              INVESTIGATION_QUEUE_URL:
-                Ref: Investigations
-              SWITCHBOARD_CONFIG_PARAMETER: /switchboard/live/runtime
-              INVESTIGATION_DLQ_URL:
-                Ref: DeadLetters
-              INVESTIGATION_DAILY_LIMIT:
-                Ref: DailyJobLimit
-              INVESTIGATION_VISITOR_DAILY_LIMIT:
-                Ref: VisitorDailyJobLimit
-              INVESTIGATION_WINDOW_LIMIT:
-                Ref: SubmissionWindowLimit
-          - Ref: AWS::NoValue
+        Variables:
+          DYNAMODB_TABLE:
+            Ref: Database
+          SWITCHBOARD_AUTH_MODE: demo
+          SWITCHBOARD_RUNTIME: aws
+          SWITCHBOARD_INVESTIGATION_MODE: live
+          LANGCHAIN_TRACING_V2: 'false'
+          LANGSMITH_TRACING: 'false'
+          AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-instrument
+          OTEL_SERVICE_NAME: switchboard-api
+          OTEL_METRICS_EXPORTER: none
+          OTEL_LOGS_EXPORTER: none
+          OTEL_PYTHON_DISABLED_INSTRUMENTATIONS: fastapi,httpx,requests,urllib,urllib3
+          INVESTIGATION_QUEUE_URL:
+            Ref: Investigations
+          SWITCHBOARD_CONFIG_PARAMETER: /switchboard/live/runtime
+          INVESTIGATION_DLQ_URL:
+            Ref: DeadLetters
+          INVESTIGATION_DAILY_LIMIT:
+            Ref: DailyJobLimit
+          INVESTIGATION_VISITOR_DAILY_LIMIT:
+            Ref: VisitorDailyJobLimit
+          INVESTIGATION_WINDOW_LIMIT:
+            Ref: SubmissionWindowLimit
       ReservedConcurrentExecutions:
         Fn::If:
           - ConcurrencyReservations
           - 8
           - Ref: AWS::NoValue
+      Tracing: Active
+      CodeUri: ../backend/
+      AutoPublishAlias: live
+      AutoPublishAliasAllProperties: true
+    Metadata:
+      BuildMethod: python-uv
   WorkerLogs:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -214,7 +206,8 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource:
-                  Fn::Sub: arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/switchboard-worker:*
+                  Fn::Sub:
+                    arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/switchboard-worker:*
               - Effect: Allow
                 Action:
                   - dynamodb:GetItem
@@ -260,7 +253,8 @@ Resources:
               - Effect: Allow
                 Action: ssm:GetParameter
                 Resource:
-                  Fn::Sub: arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/switchboard/live/deepseek-api-key
+                  Fn::Sub:
+                    arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/switchboard/live/deepseek-api-key
               - Effect: Allow
                 Action: kms:Decrypt
                 Resource: '*'
@@ -269,19 +263,16 @@ Resources:
                     kms:ViaService:
                       Fn::Sub: ssm.${AWS::Region}.amazonaws.com
                     kms:EncryptionContext:PARAMETER_ARN:
-                      Fn::Sub: arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/switchboard/live/deepseek-api-key
+                      Fn::Sub:
+                        arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/switchboard/live/deepseek-api-key
   Worker:
-    Type: AWS::Lambda::Function
+    Type: AWS::Serverless::Function
     Properties:
       FunctionName: switchboard-worker
       Role:
         Fn::GetAtt: [WorkerRole, Arn]
       Runtime: python3.12
-      Handler:
-        Fn::If:
-          - LiveRuntime
-          - switchboard.jobs.worker_handler
-          - index.handler
+      Handler: switchboard.jobs.worker_handler
       Timeout: 300
       MemorySize: 1024
       Architectures:
@@ -291,54 +282,47 @@ Resources:
         LogGroup:
           Ref: WorkerLogs
         ApplicationLogLevel: INFO
-      Code:
-        ZipFile: |-
-          def handler(event, context):
-              return {"statusCode":503,"body":"Deployment pending"}
-      TracingConfig:
-        Mode: Active
-      Layers:
-        Fn::If:
-          - LiveRuntime
-          - - arn:aws:lambda:us-east-1:901920570463:layer:aws-otel-python-amd64-ver-1-32-0:7
-          - Ref: AWS::NoValue
+      Layers: ['arn:aws:lambda:us-east-1:901920570463:layer:aws-otel-python-amd64-ver-1-32-0:7']
       Environment:
-        Fn::If:
-          - LiveRuntime
-          - Variables:
-              DYNAMODB_TABLE:
-                Ref: Database
-              SWITCHBOARD_AUTH_MODE: demo
-              SWITCHBOARD_RUNTIME: aws
-              SWITCHBOARD_INVESTIGATION_MODE: live
-              LANGCHAIN_TRACING_V2: 'false'
-              LANGSMITH_TRACING: 'false'
-              AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-instrument
-              OTEL_SERVICE_NAME: switchboard-worker
-              OTEL_METRICS_EXPORTER: none
-              OTEL_LOGS_EXPORTER: none
-              OTEL_PYTHON_DISABLED_INSTRUMENTATIONS: fastapi,httpx,requests,urllib,urllib3
-              INVESTIGATION_QUEUE_URL:
-                Ref: Investigations
-              SWITCHBOARD_CONFIG_PARAMETER: /switchboard/live/runtime
-              SWITCHBOARD_MODEL_PROVIDER:
-                Ref: ModelProvider
-              SWITCHBOARD_BEDROCK_MODEL:
-                Fn::If:
-                  - BedrockModelEnabled
-                  - Ref: BedrockModel
-                  - Ref: AWS::NoValue
-              DEEPSEEK_KEY_PARAMETER:
-                Fn::If:
-                  - DirectModel
-                  - /switchboard/live/deepseek-api-key
-                  - Ref: AWS::NoValue
-          - Ref: AWS::NoValue
+        Variables:
+          DYNAMODB_TABLE:
+            Ref: Database
+          SWITCHBOARD_AUTH_MODE: demo
+          SWITCHBOARD_RUNTIME: aws
+          SWITCHBOARD_INVESTIGATION_MODE: live
+          LANGCHAIN_TRACING_V2: 'false'
+          LANGSMITH_TRACING: 'false'
+          AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-instrument
+          OTEL_SERVICE_NAME: switchboard-worker
+          OTEL_METRICS_EXPORTER: none
+          OTEL_LOGS_EXPORTER: none
+          OTEL_PYTHON_DISABLED_INSTRUMENTATIONS: fastapi,httpx,requests,urllib,urllib3
+          INVESTIGATION_QUEUE_URL:
+            Ref: Investigations
+          SWITCHBOARD_CONFIG_PARAMETER: /switchboard/live/runtime
+          SWITCHBOARD_MODEL_PROVIDER:
+            Ref: ModelProvider
+          SWITCHBOARD_BEDROCK_MODEL:
+            Fn::If:
+              - BedrockModelEnabled
+              - Ref: BedrockModel
+              - Ref: AWS::NoValue
+          DEEPSEEK_KEY_PARAMETER:
+            Fn::If:
+              - DirectModel
+              - /switchboard/live/deepseek-api-key
+              - Ref: AWS::NoValue
       ReservedConcurrentExecutions:
         Fn::If:
           - ConcurrencyReservations
           - 5
           - Ref: AWS::NoValue
+      Tracing: Active
+      CodeUri: ../backend/
+      AutoPublishAlias: live
+      AutoPublishAliasAllProperties: true
+    Metadata:
+      BuildMethod: python-uv
   WebsiteLogs:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -365,24 +349,21 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource:
-                  Fn::Sub: arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/switchboard-website:*
+                  Fn::Sub:
+                    arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/switchboard-website:*
               - Effect: Allow
                 Action:
                   - xray:PutTraceSegments
                   - xray:PutTelemetryRecords
                 Resource: '*'
   Website:
-    Type: AWS::Lambda::Function
+    Type: AWS::Serverless::Function
     Properties:
       FunctionName: switchboard-website
       Role:
         Fn::GetAtt: [WebsiteRole, Arn]
       Runtime: nodejs24.x
-      Handler:
-        Fn::If:
-          - LiveRuntime
-          - run.sh
-          - index.handler
+      Handler: run.sh
       Timeout: 30
       MemorySize: 512
       Architectures:
@@ -391,32 +372,29 @@ Resources:
         LogFormat: JSON
         LogGroup:
           Ref: WebsiteLogs
-      Code:
-        ZipFile: exports.handler = async () => ({statusCode:503,body:"Deployment pending"});
-      TracingConfig:
-        Mode: Active
-      Layers:
-        Fn::If:
-          - LiveRuntime
-          - - arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerX86:30
-          - Ref: AWS::NoValue
+      Layers: ['arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerX86:30']
       Environment:
-        Fn::If:
-          - LiveRuntime
-          - Variables:
-              AWS_LAMBDA_EXEC_WRAPPER: /opt/bootstrap
-              AWS_LWA_PORT: '8080'
-              AWS_LWA_READINESS_CHECK_PATH: /work
-              AWS_LWA_READINESS_CHECK_HEALTHY_STATUS: 200-399
-              AWS_LWA_ENABLE_COMPRESSION: 'true'
-              AWS_LWA_INVOKE_MODE: buffered
-              NEXT_PUBLIC_AUTH_MODE: demo
-          - Ref: AWS::NoValue
+        Variables:
+          AWS_LAMBDA_EXEC_WRAPPER: /opt/bootstrap
+          AWS_LWA_PORT: '8081'
+          AWS_LWA_READINESS_CHECK_PATH: /work
+          AWS_LWA_READINESS_CHECK_HEALTHY_STATUS: 200-399
+          AWS_LWA_ENABLE_COMPRESSION: 'true'
+          AWS_LWA_INVOKE_MODE: buffered
+          NEXT_PUBLIC_AUTH_MODE: demo
+          AWS_LWA_READINESS_CHECK_PORT: '8081'
+          PORT: '8081'
       ReservedConcurrentExecutions:
         Fn::If:
           - ConcurrencyReservations
           - 6
           - Ref: AWS::NoValue
+      Tracing: Active
+      CodeUri: ../frontend/
+      AutoPublishAlias: live
+      AutoPublishAliasAllProperties: true
+    Metadata:
+      BuildMethod: makefile
   SchedulerRole:
     Type: AWS::IAM::Role
     Properties:
@@ -465,7 +443,8 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:sub: repo:HanifCarroll@26860300/b2b-saas-internal-agent@1375983110:ref:refs/heads/main
+                token.actions.githubusercontent.com:sub:
+                  repo:HanifCarroll@26860300/b2b-saas-internal-agent@1375983110:ref:refs/heads/main
       Policies:
         - PolicyName: ReleaseExistingFunctions
           PolicyDocument:
@@ -482,6 +461,10 @@ Resources:
                   - lambda:GetAlias
                   - lambda:CreateAlias
                   - lambda:UpdateAlias
+                  - 'lambda:DeleteAlias'
+                  - 'lambda:ListTags'
+                  - 'lambda:TagResource'
+                  - 'lambda:UntagResource'
                 Resource:
                   - Fn::Sub: arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:switchboard-api
                   - Fn::Sub: arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:switchboard-api:*
@@ -497,8 +480,15 @@ Resources:
                   - cloudformation:UpdateStack
                   - cloudformation:GetTemplate
                   - cloudformation:DescribeStackEvents
+                  - 'cloudformation:GetTemplateSummary'
+                  - 'cloudformation:CreateChangeSet'
+                  - 'cloudformation:DescribeChangeSet'
+                  - 'cloudformation:ExecuteChangeSet'
+                  - 'cloudformation:DeleteChangeSet'
                 Resource:
-                  Ref: AWS::StackId
+                  - Ref: AWS::StackId
+                  - Fn::Sub:
+                      arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:changeSet/samcli-deploy*/*
               - Effect: Allow
                 Action: iam:GetRole
                 Resource:
@@ -553,6 +543,18 @@ Resources:
               - Effect: Allow
                 Action: lambda:GetAccountSettings
                 Resource: '*'
+              - Effect: Allow
+                Action: ['s3:ListBucket', 's3:GetBucketLocation']
+                Resource:
+                  Fn::GetAtt: [DeploymentArtifacts, Arn]
+              - Effect: Allow
+                Action: ['s3:GetObject', 's3:PutObject', 's3:AbortMultipartUpload']
+                Resource:
+                  Fn::Sub: ${DeploymentArtifacts.Arn}/*
+              - Effect: Allow
+                Action: ['iam:GetRolePolicy']
+                Resource:
+                  Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/switchboard-*
   Alerts:
     Type: AWS::SNS::Topic
     Properties:
@@ -571,8 +573,8 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: switchboard-APIErrors
-      AlarmDescription: At least one API invocation failed in the last five minutes. Check the API logs
-        and matching trace before retrying the action.
+      AlarmDescription: At least one API invocation failed in the last five minutes. Check the API logs and
+        matching trace before retrying the action.
       Namespace: AWS/Lambda
       MetricName: Errors
       Statistic: Sum
@@ -628,8 +630,8 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: switchboard-QueueBacklog
-      AlarmDescription: The oldest queued investigation has waited over 15 minutes across two checks.
-        Check worker concurrency, retry status, and queue visibility before submitting more work.
+      AlarmDescription: The oldest queued investigation has waited over 15 minutes across two checks. Check
+        worker concurrency, retry status, and queue visibility before submitting more work.
       Namespace: AWS/SQS
       MetricName: ApproximateAgeOfOldestMessage
       Statistic: Maximum
@@ -647,9 +649,8 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: switchboard-DeadLetterJobs
-      AlarmDescription: At least one investigation reached the dead-letter queue. Check its saved job
-        state and worker logs. Maintenance records the failure; replay requires current access and workspace
-        checks.
+      AlarmDescription: At least one investigation reached the dead-letter queue. Check its saved job state
+        and worker logs. Maintenance records the failure; replay requires current access and workspace checks.
       Namespace: AWS/SQS
       MetricName: ApproximateNumberOfMessagesVisible
       Statistic: Maximum
@@ -667,8 +668,8 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: switchboard-RejectedJobs
-      AlarmDescription: At least one investigation failed access, input, or report validation in the last
-        five minutes. The app stopped the investigation. Check worker logs and the saved job before starting
+      AlarmDescription: At least one investigation failed access, input, or report validation in the last five
+        minutes. The app stopped the investigation. Check worker logs and the saved job before starting
         another run.
       Namespace: Switchboard
       MetricName: FailedInvestigations
@@ -698,43 +699,39 @@ Resources:
       DashboardName: switchboard
       DashboardBody:
         Fn::Sub:
-          - '{"widgets": [{"type": "metric", "x": 0, "y": 0, "width": 24, "height": 6, "properties": {"title":
-            "Lambda invocations and errors", "region": "us-east-1", "period": 300, "stat": "Sum", "metrics":
-            [["AWS/Lambda", "Invocations", "FunctionName", "switchboard-api"], ["AWS/Lambda", "Errors",
-            "FunctionName", "switchboard-api"], ["AWS/Lambda", "Throttles", "FunctionName", "switchboard-api"],
-            ["AWS/Lambda", "Invocations", "FunctionName", "switchboard-worker"], ["AWS/Lambda", "Errors",
-            "FunctionName", "switchboard-worker"], ["AWS/Lambda", "Throttles", "FunctionName", "switchboard-worker"],
-            ["AWS/Lambda", "Invocations", "FunctionName", "switchboard-website"], ["AWS/Lambda", "Errors",
-            "FunctionName", "switchboard-website"], ["AWS/Lambda", "Throttles", "FunctionName", "switchboard-website"],
-            ["AWS/Lambda", "Invocations", "FunctionName", "switchboard-receiver"], ["AWS/Lambda", "Errors",
-            "FunctionName", "switchboard-receiver"], ["AWS/Lambda", "Throttles", "FunctionName", "switchboard-receiver"]]}},
-            {"type": "metric", "x": 0, "y": 6, "width": 24, "height": 6, "properties": {"title": "Lambda
-            duration", "region": "us-east-1", "period": 300, "stat": "p95", "metrics": [["AWS/Lambda",
-            "Duration", "FunctionName", "switchboard-api"], ["AWS/Lambda", "Duration", "FunctionName",
-            "switchboard-worker"], ["AWS/Lambda", "Duration", "FunctionName", "switchboard-website"],
-            ["AWS/Lambda", "Duration", "FunctionName", "switchboard-receiver"]]}}, {"type": "metric",
-            "x": 0, "y": 12, "width": 24, "height": 6, "properties": {"title": "Investigation queues",
-            "region": "us-east-1", "period": 300, "stat": "Maximum", "metrics": [["AWS/SQS", "ApproximateNumberOfMessagesVisible",
-            "QueueName", "switchboard-investigations"], ["AWS/SQS", "ApproximateNumberOfMessagesNotVisible",
-            "QueueName", "switchboard-investigations"], ["AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName",
-            "switchboard-investigations"], ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName",
-            "switchboard-failed"], ["AWS/SQS", "ApproximateNumberOfMessagesNotVisible", "QueueName", "switchboard-failed"],
-            ["AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", "switchboard-failed"]]}}, {"type":
-            "metric", "x": 0, "y": 18, "width": 24, "height": 6, "properties": {"title": "DynamoDB capacity
-            and throttling", "region": "us-east-1", "period": 300, "stat": "Sum", "metrics": [["AWS/DynamoDB",
-            "ConsumedReadCapacityUnits", "TableName", "switchboard"], ["AWS/DynamoDB", "ConsumedWriteCapacityUnits",
-            "TableName", "switchboard"], ["AWS/DynamoDB", "ReadThrottleEvents", "TableName", "switchboard"],
-            ["AWS/DynamoDB", "WriteThrottleEvents", "TableName", "switchboard"]]}}, {"type": "metric",
-            "x": 0, "y": 24, "width": 24, "height": 6, "properties": {"title": "Regional Lambda concurrency",
-            "region": "us-east-1", "period": 300, "stat": "Maximum", "metrics": [["AWS/Lambda", "ConcurrentExecutions"],
-            ["AWS/Lambda", "ClaimedAccountConcurrency"]]}}, {"type": "metric", "x": 0, "y": 30, "width":
-            24, "height": 6, "properties": {"title": "Rejected investigations", "region": "us-east-1",
-            "period": 300, "stat": "Sum", "metrics": [["Switchboard", "FailedInvestigations"]]}}, {"type":
-            "metric", "x": 0, "y": 36, "width": 24, "height": 6, "properties": {"title": "Change workflows",
-            "region": "us-east-1", "period": 300, "stat": "Sum", "metrics": [["AWS/States", "ExecutionsStarted",
-            "StateMachineArn", "${WorkflowArn}"], ["AWS/States", "ExecutionsSucceeded", "StateMachineArn",
-            "${WorkflowArn}"], ["AWS/States", "ExecutionsFailed", "StateMachineArn", "${WorkflowArn}"],
-            ["AWS/States", "ExecutionsTimedOut", "StateMachineArn", "${WorkflowArn}"]]}}]}'
+          - '{"widgets": [{"type": "metric", "x": 0, "y": 0, "width": 24, "height": 6, "properties": {"title": "Lambda
+            invocations and errors", "region": "us-east-1", "period": 300, "stat": "Sum", "metrics": [["AWS/Lambda",
+            "Invocations", "FunctionName", "switchboard-api"], ["AWS/Lambda", "Errors", "FunctionName", "switchboard-api"],
+            ["AWS/Lambda", "Throttles", "FunctionName", "switchboard-api"], ["AWS/Lambda", "Invocations", "FunctionName",
+            "switchboard-worker"], ["AWS/Lambda", "Errors", "FunctionName", "switchboard-worker"], ["AWS/Lambda",
+            "Throttles", "FunctionName", "switchboard-worker"], ["AWS/Lambda", "Invocations", "FunctionName", "switchboard-website"],
+            ["AWS/Lambda", "Errors", "FunctionName", "switchboard-website"], ["AWS/Lambda", "Throttles", "FunctionName",
+            "switchboard-website"], ["AWS/Lambda", "Invocations", "FunctionName", "switchboard-receiver"], ["AWS/Lambda",
+            "Errors", "FunctionName", "switchboard-receiver"], ["AWS/Lambda", "Throttles", "FunctionName", "switchboard-receiver"]]}},
+            {"type": "metric", "x": 0, "y": 6, "width": 24, "height": 6, "properties": {"title": "Lambda duration",
+            "region": "us-east-1", "period": 300, "stat": "p95", "metrics": [["AWS/Lambda", "Duration", "FunctionName",
+            "switchboard-api"], ["AWS/Lambda", "Duration", "FunctionName", "switchboard-worker"], ["AWS/Lambda",
+            "Duration", "FunctionName", "switchboard-website"], ["AWS/Lambda", "Duration", "FunctionName", "switchboard-receiver"]]}},
+            {"type": "metric", "x": 0, "y": 12, "width": 24, "height": 6, "properties": {"title": "Investigation
+            queues", "region": "us-east-1", "period": 300, "stat": "Maximum", "metrics": [["AWS/SQS", "ApproximateNumberOfMessagesVisible",
+            "QueueName", "switchboard-investigations"], ["AWS/SQS", "ApproximateNumberOfMessagesNotVisible", "QueueName",
+            "switchboard-investigations"], ["AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", "switchboard-investigations"],
+            ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "switchboard-failed"], ["AWS/SQS", "ApproximateNumberOfMessagesNotVisible",
+            "QueueName", "switchboard-failed"], ["AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", "switchboard-failed"]]}},
+            {"type": "metric", "x": 0, "y": 18, "width": 24, "height": 6, "properties": {"title": "DynamoDB capacity
+            and throttling", "region": "us-east-1", "period": 300, "stat": "Sum", "metrics": [["AWS/DynamoDB", "ConsumedReadCapacityUnits",
+            "TableName", "switchboard"], ["AWS/DynamoDB", "ConsumedWriteCapacityUnits", "TableName", "switchboard"],
+            ["AWS/DynamoDB", "ReadThrottleEvents", "TableName", "switchboard"], ["AWS/DynamoDB", "WriteThrottleEvents",
+            "TableName", "switchboard"]]}}, {"type": "metric", "x": 0, "y": 24, "width": 24, "height": 6, "properties":
+            {"title": "Regional Lambda concurrency", "region": "us-east-1", "period": 300, "stat": "Maximum", "metrics":
+            [["AWS/Lambda", "ConcurrentExecutions"], ["AWS/Lambda", "ClaimedAccountConcurrency"]]}}, {"type": "metric",
+            "x": 0, "y": 30, "width": 24, "height": 6, "properties": {"title": "Rejected investigations", "region":
+            "us-east-1", "period": 300, "stat": "Sum", "metrics": [["Switchboard", "FailedInvestigations"]]}}, {"type":
+            "metric", "x": 0, "y": 36, "width": 24, "height": 6, "properties": {"title": "Change workflows", "region":
+            "us-east-1", "period": 300, "stat": "Sum", "metrics": [["AWS/States", "ExecutionsStarted", "StateMachineArn",
+            "${WorkflowArn}"], ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", "${WorkflowArn}"], ["AWS/States",
+            "ExecutionsFailed", "StateMachineArn", "${WorkflowArn}"], ["AWS/States", "ExecutionsTimedOut", "StateMachineArn",
+            "${WorkflowArn}"]]}}]}'
           - WorkflowArn:
               Ref: Workflow
   AlertsPolicy:
@@ -768,7 +765,7 @@ Resources:
       Qualifier: live
       AuthType: AWS_IAM
       InvokeMode: BUFFERED
-    DependsOn: APIAlias
+    DependsOn: APIAliaslive
   APIUrlPermission:
     Type: AWS::Lambda::Permission
     DeletionPolicy: Retain
@@ -781,7 +778,7 @@ Resources:
       SourceArn:
         Fn::Sub: arn:aws:cloudfront::${AWS::AccountId}:distribution/${Delivery}
       FunctionUrlAuthType: AWS_IAM
-    DependsOn: APIAlias
+    DependsOn: APIAliaslive
   APIInvokePermission:
     Type: AWS::Lambda::Permission
     DeletionPolicy: Retain
@@ -794,7 +791,7 @@ Resources:
       SourceArn:
         Fn::Sub: arn:aws:cloudfront::${AWS::AccountId}:distribution/${Delivery}
       InvokedViaFunctionUrl: true
-    DependsOn: APIAlias
+    DependsOn: APIAliaslive
   WebsiteUrl:
     Type: AWS::Lambda::Url
     DeletionPolicy: Retain
@@ -805,7 +802,7 @@ Resources:
       Qualifier: live
       AuthType: AWS_IAM
       InvokeMode: BUFFERED
-    DependsOn: WebsiteAlias
+    DependsOn: WebsiteAliaslive
   WebsiteUrlPermission:
     Type: AWS::Lambda::Permission
     DeletionPolicy: Retain
@@ -818,7 +815,7 @@ Resources:
       SourceArn:
         Fn::Sub: arn:aws:cloudfront::${AWS::AccountId}:distribution/${Delivery}
       FunctionUrlAuthType: AWS_IAM
-    DependsOn: WebsiteAlias
+    DependsOn: WebsiteAliaslive
   WebsiteInvokePermission:
     Type: AWS::Lambda::Permission
     DeletionPolicy: Retain
@@ -831,7 +828,7 @@ Resources:
       SourceArn:
         Fn::Sub: arn:aws:cloudfront::${AWS::AccountId}:distribution/${Delivery}
       InvokedViaFunctionUrl: true
-    DependsOn: WebsiteAlias
+    DependsOn: WebsiteAliaslive
   WorkerQueue:
     Type: AWS::Lambda::EventSourceMapping
     DeletionPolicy: Retain
@@ -843,14 +840,10 @@ Resources:
         Fn::GetAtt: [Investigations, Arn]
       BatchSize: 1
       MaximumBatchingWindowInSeconds: 0
-      Enabled:
-        Fn::If:
-          - BootstrapWorker
-          - false
-          - true
+      Enabled: true
       ScalingConfig:
         MaximumConcurrency: 2
-    DependsOn: WorkerAlias
+    DependsOn: WorkerAliaslive
   Maintenance:
     Type: AWS::Scheduler::Schedule
     DeletionPolicy: Retain
@@ -872,7 +865,7 @@ Resources:
           MaximumRetryAttempts: 2
         RoleArn:
           Fn::GetAtt: [SchedulerRole, Arn]
-    DependsOn: APIAlias
+    DependsOn: APIAliaslive
   OriginAccess:
     Type: AWS::CloudFront::OriginAccessControl
     DeletionPolicy: Retain
@@ -1075,7 +1068,8 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource:
-                  Fn::Sub: arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/switchboard-receiver:*
+                  Fn::Sub:
+                    arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/switchboard-receiver:*
               - Effect: Allow
                 Action:
                   - dynamodb:GetItem
@@ -1092,17 +1086,13 @@ Resources:
                   - xray:PutTelemetryRecords
                 Resource: '*'
   Receiver:
-    Type: AWS::Lambda::Function
+    Type: AWS::Serverless::Function
     Properties:
       FunctionName: switchboard-receiver
       Role:
         Fn::GetAtt: [ReceiverRole, Arn]
       Runtime: python3.12
-      Handler:
-        Fn::If:
-          - LiveRuntime
-          - switchboard.receiver.handler
-          - index.handler
+      Handler: switchboard.receiver.handler
       Timeout: 15
       MemorySize: 512
       Architectures:
@@ -1112,62 +1102,37 @@ Resources:
         LogGroup:
           Ref: ReceiverLogs
         ApplicationLogLevel: INFO
-      Code:
-        ZipFile: |-
-          def handler(event, context):
-              return {"statusCode":503,"body":"Deployment pending"}
-      TracingConfig:
-        Mode: Active
-      Layers:
-        Fn::If:
-          - LiveRuntime
-          - - arn:aws:lambda:us-east-1:901920570463:layer:aws-otel-python-amd64-ver-1-32-0:7
-          - Ref: AWS::NoValue
+      Layers: ['arn:aws:lambda:us-east-1:901920570463:layer:aws-otel-python-amd64-ver-1-32-0:7']
       Environment:
-        Fn::If:
-          - LiveRuntime
-          - Variables:
-              DYNAMODB_TABLE:
-                Ref: Database
-              SWITCHBOARD_AUTH_MODE: demo
-              SWITCHBOARD_RUNTIME: aws
-              SWITCHBOARD_INVESTIGATION_MODE: live
-              LANGCHAIN_TRACING_V2: 'false'
-              LANGSMITH_TRACING: 'false'
-              AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-instrument
-              OTEL_SERVICE_NAME: switchboard-receiver
-              OTEL_METRICS_EXPORTER: none
-              OTEL_LOGS_EXPORTER: none
-              OTEL_PYTHON_DISABLED_INSTRUMENTATIONS: fastapi,httpx,requests,urllib,urllib3
-              INVESTIGATION_QUEUE_URL:
-                Ref: Investigations
-          - Ref: AWS::NoValue
+        Variables:
+          DYNAMODB_TABLE:
+            Ref: Database
+          SWITCHBOARD_AUTH_MODE: demo
+          SWITCHBOARD_RUNTIME: aws
+          SWITCHBOARD_INVESTIGATION_MODE: live
+          LANGCHAIN_TRACING_V2: 'false'
+          LANGSMITH_TRACING: 'false'
+          AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-instrument
+          OTEL_SERVICE_NAME: switchboard-receiver
+          OTEL_METRICS_EXPORTER: none
+          OTEL_LOGS_EXPORTER: none
+          OTEL_PYTHON_DISABLED_INSTRUMENTATIONS: fastapi,httpx,requests,urllib,urllib3
+          INVESTIGATION_QUEUE_URL:
+            Ref: Investigations
       ReservedConcurrentExecutions:
         Fn::If:
           - ConcurrencyReservations
           - 2
           - Ref: AWS::NoValue
-  ReceiverBootstrap:
-    Type: AWS::Lambda::Version
-    DeletionPolicy: Retain
-    Properties:
-      FunctionName:
-        Ref: Receiver
-      Description: Initial receiver publication
-  ReceiverAlias:
-    Type: AWS::Lambda::Alias
-    Properties:
-      FunctionName:
-        Ref: Receiver
-      Name: live
-      FunctionVersion:
-        Fn::If:
-          - BootstrapReceiver
-          - Fn::GetAtt: [ReceiverBootstrap, Version]
-          - Ref: ReceiverVersion
+      Tracing: Active
+      CodeUri: ../backend/
+      AutoPublishAlias: live
+      AutoPublishAliasAllProperties: true
+    Metadata:
+      BuildMethod: python-uv
   ReceiverUrl:
     Type: AWS::Lambda::Url
-    DependsOn: ReceiverAlias
+    DependsOn: ReceiverAliaslive
     Properties:
       TargetFunctionArn:
         Ref: Receiver
@@ -1191,7 +1156,8 @@ Resources:
                   Ref: AWS::AccountId
               ArnEquals:
                 aws:SourceArn:
-                  Fn::Sub: arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:switchboard-change-workflow
+                  Fn::Sub:
+                    arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:switchboard-change-workflow
       Policies:
         - PolicyName: AdvanceWorkflow
           PolicyDocument:
@@ -1371,7 +1337,7 @@ Resources:
                 MaxAttempts: 2
                 BackoffRate: 2
             Next: ReviewDelivery
-    DependsOn: APIAlias
+    DependsOn: APIAliaslive
   RuntimeSettings:
     Type: AWS::SSM::Parameter
     Properties:
@@ -1390,8 +1356,8 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: switchboard-ReceiverErrors
-      AlarmDescription: At least one webhook receiver invocation failed in the last five minutes. Check
-        the receiver logs and saved delivery-verification receipt. An uncertain result requires manual
+      AlarmDescription: At least one webhook receiver invocation failed in the last five minutes. Check the
+        receiver logs and saved delivery-verification receipt. An uncertain result requires manual
         investigation.
       Namespace: AWS/Lambda
       MetricName: Errors
@@ -1431,8 +1397,8 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: switchboard-WorkflowTimeouts
-      AlarmDescription: At least one workflow reached its 24-hour limit. Review its Step Functions history
-        and saved action receipts. Approval, execution, and verification are separate manual actions.
+      AlarmDescription: At least one workflow reached its 24-hour limit. Review its Step Functions history and
+        saved action receipts. Approval, execution, and verification are separate manual actions.
       Namespace: AWS/States
       MetricName: ExecutionsTimedOut
       Statistic: Sum
@@ -1477,7 +1443,8 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource:
-                  Fn::Sub: arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/switchboard-notifications:*
+                  Fn::Sub:
+                    arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/switchboard-notifications:*
               - Effect: Allow
                 Action: sns:Publish
                 Resource:
@@ -1603,75 +1570,12 @@ Resources:
       Protocol: lambda
       Endpoint:
         Fn::GetAtt: [Notifications, Arn]
-  APIBootstrap:
-    Type: AWS::Lambda::Version
-    Condition: BootstrapAPI
-    DeletionPolicy: Retain
-    Properties:
-      FunctionName:
-        Ref: API
-      Description: Initial api publication
-  APIAlias:
-    Type: AWS::Lambda::Alias
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      FunctionName:
-        Ref: API
-      Name: live
-      FunctionVersion:
-        Fn::If:
-          - BootstrapAPI
-          - Fn::GetAtt: [APIBootstrap, Version]
-          - Ref: APIVersion
-  WorkerBootstrap:
-    Type: AWS::Lambda::Version
-    Condition: BootstrapWorker
-    DeletionPolicy: Retain
-    Properties:
-      FunctionName:
-        Ref: Worker
-      Description: Initial worker publication
-  WorkerAlias:
-    Type: AWS::Lambda::Alias
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      FunctionName:
-        Ref: Worker
-      Name: live
-      FunctionVersion:
-        Fn::If:
-          - BootstrapWorker
-          - Fn::GetAtt: [WorkerBootstrap, Version]
-          - Ref: WorkerVersion
-  WebsiteBootstrap:
-    Type: AWS::Lambda::Version
-    Condition: BootstrapWebsite
-    DeletionPolicy: Retain
-    Properties:
-      FunctionName:
-        Ref: Website
-      Description: Initial website publication
-  WebsiteAlias:
-    Type: AWS::Lambda::Alias
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      FunctionName:
-        Ref: Website
-      Name: live
-      FunctionVersion:
-        Fn::If:
-          - BootstrapWebsite
-          - Fn::GetAtt: [WebsiteBootstrap, Version]
-          - Ref: WebsiteVersion
   ThrottlesAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: switchboard-Throttles
-      AlarmDescription: Lambda rejected work because concurrency was exhausted. Check account capacity
-        and function reservations in the operations guide.
+      AlarmDescription: Lambda rejected work because concurrency was exhausted. Check account capacity and
+        function reservations in the operations guide.
       Namespace: AWS/Lambda
       MetricName: Throttles
       Statistic: Sum
@@ -1682,6 +1586,47 @@ Resources:
       TreatMissingData: notBreaching
       AlarmActions:
         - Ref: AlarmEvents
+  DeploymentArtifacts:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName:
+        Fn::Sub: switchboard-deployments-${AWS::AccountId}-${AWS::Region}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: AbortIncompleteUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+  DeploymentArtifactsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: DeploymentArtifacts
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - Fn::GetAtt: [DeploymentArtifacts, Arn]
+              - Fn::Sub: ${DeploymentArtifacts.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
 Outputs:
   Database:
     Value:
@@ -1733,52 +1678,29 @@ Outputs:
   DeliveryPlanArn:
     Value:
       Fn::GetAtt: [DeliveryPlan, Arn]
+  DeploymentBucket:
+    Value:
+      Ref: DeploymentArtifacts
 Parameters:
   AlertEmail:
     Type: String
     Default: ''
     Description: Email recipient for operational alerts; SNS confirmation is required.
-  ReceiverVersion:
-    Type: String
-    Default: bootstrap
-    Description: Published receiver version promoted by the release command.
-  RuntimeReady:
-    Type: String
-    Default: bootstrap
-    AllowedValues:
-      - bootstrap
-      - live
-    Description: Use live handlers after the first complete application ZIP upload.
   ModelProvider:
     Type: String
-    Default: deepseek
+    Default: bedrock
     AllowedValues:
       - deepseek
       - bedrock
     Description: Investigation worker model provider.
   BedrockModel:
     Type: String
-    Default: deepseek.v3.2
+    Default: minimax.minimax-m2.5
     AllowedValues:
       - deepseek.v3.2
       - openai.gpt-6-luna
       - minimax.minimax-m2.5
     Description: Model used when ModelProvider is bedrock.
-  APIVersion:
-    Type: String
-    Default: bootstrap
-    AllowedPattern: bootstrap|[0-9]+
-    Description: Published api version promoted by the release command.
-  WorkerVersion:
-    Type: String
-    Default: bootstrap
-    AllowedPattern: bootstrap|[0-9]+
-    Description: Published worker version promoted by the release command.
-  WebsiteVersion:
-    Type: String
-    Default: bootstrap
-    AllowedPattern: bootstrap|[0-9]+
-    Description: Published website version promoted by the release command.
   DailyJobLimit:
     Type: Number
     Default: 100
@@ -1793,7 +1715,7 @@ Parameters:
     Description: Maximum new investigations per visitor per UTC day.
   ReserveConcurrency:
     Type: String
-    Default: disabled
+    Default: enabled
     AllowedValues:
       - enabled
       - disabled
@@ -1810,14 +1732,6 @@ Conditions:
       - Fn::Equals:
           - Ref: AlertEmail
           - ''
-  BootstrapReceiver:
-    Fn::Equals:
-      - Ref: ReceiverVersion
-      - bootstrap
-  LiveRuntime:
-    Fn::Equals:
-      - Ref: RuntimeReady
-      - live
   DirectModel:
     Fn::Equals:
       - Ref: ModelProvider
@@ -1826,18 +1740,6 @@ Conditions:
     Fn::Equals:
       - Ref: ModelProvider
       - bedrock
-  BootstrapAPI:
-    Fn::Equals:
-      - Ref: APIVersion
-      - bootstrap
-  BootstrapWorker:
-    Fn::Equals:
-      - Ref: WorkerVersion
-      - bootstrap
-  BootstrapWebsite:
-    Fn::Equals:
-      - Ref: WebsiteVersion
-      - bootstrap
   ConcurrencyReservations:
     Fn::Equals:
       - Ref: ReserveConcurrency

@@ -26,12 +26,12 @@ The company, customer data, and delivery events are synthetic. Investigations us
 - **AWS Lambda and CloudFront:** separate website, API, investigation worker, and webhook receiver; protected origins and appropriate response caching.
 - **Step Functions:** a durable change workflow that waits for manual approval, execution, and verification while LangGraph runs the investigation.
 - **Systems Manager Parameter Store:** shared runtime settings and an encrypted model credential available only to the worker.
-- **CloudFormation:** hosting, protected origins, subscriptions, queues, schedules, workflows, and scoped runtime roles defined as infrastructure.
+- **AWS SAM and CloudFormation:** hosting, protected origins, subscriptions, queues, schedules, workflows, and scoped runtime roles defined as infrastructure.
 - **DynamoDB:** workspace generations, conditional business transactions, canonical proposals, immutable result chunks, and retry-safe receipts.
 - **SQS and EventBridge Scheduler:** durable submissions, native retries, worker leases, dead-letter handling, and scheduled recovery.
 - **Amazon Bedrock:** IAM-authenticated model calls through the Bedrock Mantle Chat Completions API, using the same access-controlled tools and report validation.
 - **CloudWatch and OpenTelemetry:** operational alarms, a dashboard, and sampled traces of API requests, queue delivery, database calls, and model calls.
-- **GitHub Actions:** deterministic checks, scoped OIDC deployment, immutable function versions, independent releases, and readable operational email alerts.
+- **GitHub Actions:** deterministic checks, scoped OIDC deployment, SAM deployments, immutable function versions, and readable operational email alerts.
 
 See [architecture and reliability](docs/architecture.md) for the boundaries and tradeoffs, or [AWS operations](aws/README.md) for deployment and recovery commands.
 

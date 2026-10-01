@@ -1,0 +1,19 @@
+version = 0.1
+
+[default.global.parameters]
+region = "us-east-1"
+
+[default.build.parameters]
+template_file = "aws/template.yml"
+build_in_source = true
+beta_features = true
+
+[default.deploy.parameters]
+stack_name = "switchboard"
+capabilities = "CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
+s3_prefix = "releases"
+confirm_changeset = false
+fail_on_empty_changeset = false
+
+[default.validate.parameters]
+template_file = "aws/template.yml"

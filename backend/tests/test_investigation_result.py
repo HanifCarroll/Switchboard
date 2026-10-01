@@ -1,6 +1,7 @@
 """Result consistency checks do not establish business authorization."""
 
 import json
+import re
 
 import pytest
 from pydantic import ValidationError
@@ -50,6 +51,25 @@ def test_valid_candidate(candidate):
 
     assert result.ticket_id == "CHG-1042"
     assert result.outcome == "proposal_candidate"
+
+
+def test_text_schema_supports_complete_ids_and_multiline_findings(candidate):
+    # 1. Check the full-string pattern used by constrained model providers.
+    schema = InvestigationResult.model_json_schema()
+    ticket_pattern = schema["properties"]["ticket_id"]["anyOf"][0]["pattern"]
+    overview_pattern = schema["$defs"]["InvestigationFindings"]["properties"][
+        "overview"
+    ]["pattern"]
+    overview = "The request supports a proposal.\nApproval is still unverified."
+    assert re.fullmatch(ticket_pattern, "CHG-1042")
+    assert re.fullmatch(overview_pattern, overview)
+    assert not re.fullmatch(overview_pattern, " \n\t ")
+
+    # 2. Preserve the same validation when receiving the complete model output.
+    candidate["findings"]["overview"] = overview
+    result = InvestigationResult.model_validate_json(json.dumps(candidate))
+    assert result.ticket_id == "CHG-1042"
+    assert result.findings.overview == overview
 
 
 @pytest.mark.parametrize(

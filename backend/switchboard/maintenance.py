@@ -9,6 +9,7 @@ from typing import Any
 from switchboard.dynamodb import DynamoStore, key
 from switchboard.jobs import TERMINAL, authorize, dispatch, fail, queue_client
 from switchboard.storage import StorageError, WorkspaceStorage
+from switchboard.workflow import advance, complete_investigation
 
 
 def maintain(context=None):
@@ -52,6 +53,7 @@ def maintain(context=None):
                             continue
                         raise
                     counts["failed"] += 1
+            complete_investigation(body)
             sqs.delete_message(
                 QueueUrl=os.environ["INVESTIGATION_DLQ_URL"],
                 ReceiptHandle=message["ReceiptHandle"],
@@ -127,6 +129,14 @@ def maintain(context=None):
                     except StorageError as error:
                         if error.status != 409:
                             raise
+            if sort.startswith("FLOW#"):
+                waiting = json.loads(item["body"]["S"])
+                store.generations[workspace] = generation
+                advance(
+                    WorkspaceStorage(workspace, transport=store),
+                    waiting["run_id"],
+                    waiting["stage"],
+                )
         cursor = response.get("LastEvaluatedKey")
         store.client.put_item(
             TableName=store.table,

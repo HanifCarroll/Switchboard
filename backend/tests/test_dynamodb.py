@@ -50,7 +50,7 @@ def workspace(dynamo, identifier="one"):
     return storage
 
 
-def test_full_portfolio_and_atomic_execution(dynamo):
+def test_full_portfolio_and_atomic_execution(dynamo, delivered_delivery):
     storage = WorkspaceStorage("one", transport=dynamo)
     initialize_demo_portfolio(storage=storage)
     proposal = next(

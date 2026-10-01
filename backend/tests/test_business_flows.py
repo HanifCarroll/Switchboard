@@ -171,7 +171,9 @@ def test_execution_before_approval_is_rejected_without_writes(storage):
     assert storage.get_integration(integration_id="int-acme-prod")["version"] == 7
 
 
-def test_successful_delivery_verification_closes_the_ticket(storage):
+def test_successful_delivery_verification_closes_the_ticket(
+    storage, delivered_delivery
+):
     proposal = saved_proposal(storage)
     approve_proposal(
         proposal_id=proposal.id,
@@ -209,7 +211,7 @@ def test_delivery_verification_retry_does_not_send_another_event(storage, monkey
     )
     sent_event_ids = []
 
-    def send_event(*, destination: str, test_event_id: str):
+    def send_event(*, destination: str, test_event_id: str, storage):
         sent_event_ids.append(test_event_id)
         return DeliveryTestResult(
             outcome="delivered",
@@ -251,7 +253,7 @@ def test_unsuccessful_delivery_requires_manual_attention(storage, monkeypatch, o
     monkeypatch.setattr(
         delivery_service,
         "send_synthetic_test_event",
-        lambda *, destination, test_event_id: DeliveryTestResult(
+        lambda *, destination, test_event_id, storage: DeliveryTestResult(
             outcome=outcome,
             test_event_id=test_event_id,
             evidence=f"No confirmed delivery from {destination}",

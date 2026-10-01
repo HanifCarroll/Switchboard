@@ -59,11 +59,12 @@ def verify_execution_delivery(
     ):
         raise ValueError("Configuration changed after execution")
 
-    # 4. Send one deterministic test event and persist its observed outcome.
+    # 4. Send an event with a stable identity and persist its observed outcome.
     test_event_id = str(uuid5(NAMESPACE_URL, f"switchboard:{execution.id}:delivery"))
     test_result = delivery_service.send_synthetic_test_event(
         destination=str(integration.endpoint),
         test_event_id=test_event_id,
+        storage=session.storage,
     )
     verification = DeliveryVerification(
         id=str(uuid4()),

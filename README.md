@@ -17,18 +17,21 @@ Switchboard models an internal team managing webhook endpoint changes for a B2B 
 
 The dashboard presents evidence, decision criteria, blockers, approvals, and action receipts. Investigations run in the background and can be reopened after navigation or reload. Each visitor receives an isolated workspace and can switch between fictional employee personas to explore the access rules.
 
-The company, customer data, and delivery events are synthetic. Investigations use a real model through Amazon Bedrock or the DeepSeek API; delivery verification is deterministic and does not contact a real webhook. Microsoft Entra authentication is supported for configured workspaces; the public demo uses fictional identities.
+The company, customer data, and delivery events are synthetic. Investigations use a real model through Amazon Bedrock or the DeepSeek API; delivery verification sends a signed HTTP event to a separate AWS receiver and checks its durable receipt. Microsoft Entra authentication is supported for configured workspaces; the public demo uses fictional identities.
 
 ## Engineering
 
 - **Python, FastAPI, LangGraph, and Pydantic:** a bounded investigation workflow with read-only tools, trusted identity context, structured reports, and one allowed policy revision.
 - **Next.js and React:** request and approval views, captured-versus-current evidence, identity-scoped queries, and background job polling.
-- **AWS Lambda and CloudFront:** separate website, API, and investigation worker; protected origins and appropriate response caching.
+- **AWS Lambda and CloudFront:** separate website, API, investigation worker, and webhook receiver; protected origins and appropriate response caching.
+- **Step Functions:** a durable change workflow that waits for manual approval, execution, and verification while LangGraph runs the investigation.
+- **Systems Manager Parameter Store:** shared runtime settings and an encrypted model credential available only to the worker.
+- **CloudFormation:** hosting, protected origins, subscriptions, queues, schedules, workflows, and scoped runtime roles defined as infrastructure.
 - **DynamoDB:** workspace generations, conditional business transactions, canonical proposals, immutable result chunks, and retry-safe receipts.
 - **SQS and EventBridge Scheduler:** durable submissions, native retries, worker leases, dead-letter handling, and scheduled recovery.
 - **Amazon Bedrock:** IAM-authenticated model calls through the Bedrock Mantle Chat Completions API, using the same access-controlled tools and report validation.
 - **CloudWatch and OpenTelemetry:** operational alarms, a dashboard, and sampled traces of API requests, queue delivery, database calls, and model calls.
-- **GitHub Actions:** deterministic checks, scoped OIDC deployment, immutable function versions, and independent releases.
+- **GitHub Actions:** deterministic checks, scoped OIDC deployment, immutable function versions, independent releases, and readable operational email alerts.
 
 See [architecture and reliability](docs/architecture.md) for the boundaries and tradeoffs, or [AWS operations](aws/README.md) for deployment and recovery commands.
 
@@ -42,7 +45,7 @@ Requirements: Python 3.11+, uv, Node.js 24, AWS CLI, and Docker.
 ./scripts/dev
 ```
 
-Open http://localhost:3000. The script starts DynamoDB Local, the Python API, and Next.js. Local records persist in the `switchboard-local-data` Docker volume. Investigations use deterministic fixtures by default, through the same authorization and persistence rules.
+Open http://localhost:3000. The script starts DynamoDB Local, the Python API, and Next.js. Local records persist in the `switchboard-local-data` Docker volume. Local development covers investigation and change management; signed delivery verification uses the deployed AWS receiver. Investigations use deterministic fixtures by default, through the same authorization and persistence rules.
 
 For real investigations, set `DEEPSEEK_API_KEY` in ignored `backend/.env` and run:
 

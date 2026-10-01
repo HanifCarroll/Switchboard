@@ -14,7 +14,7 @@ from pydantic import (
     model_validator,
 )
 
-Text = Annotated[str, Field(min_length=1, pattern=r"\S")]
+Text = Annotated[str, Field(min_length=1, pattern=r"^[\s\S]*\S[\s\S]*$")]
 Role = Literal["support_specialist", "implementation_engineer", "technical_lead"]
 Environment = Literal["sandbox", "production"]
 DeliveryOutcome = Literal["delivered", "failed", "inconclusive"]
@@ -243,12 +243,16 @@ class InvestigationFindings(Record):
 class InvestigationResult(Record):
     """Investigator findings, not authorization to save or execute a change."""
 
-    outcome: Literal["proposal_candidate", "blocked"]
     ticket_id: Text | None
     proposed_endpoint: HttpUrl | None
     evidence_ids: list[Text]
     findings: InvestigationFindings
-    blockers: list[InvestigationBlocker]
+    blockers: list[InvestigationBlocker] = Field(
+        description="Only missing evidence or confirmed violations that prevent proposal preparation. Exclude execution approval, execution windows, and delivery verification."
+    )
+    outcome: Literal["proposal_candidate", "blocked"] = Field(
+        description="Use blocked when blockers is nonempty; otherwise use proposal_candidate with a known ticket, endpoint, and evidence. Missing execution approval or a closed window does not block preparation."
+    )
 
     @field_serializer("proposed_endpoint")
     def serialize_endpoint(self, endpoint: HttpUrl | None) -> str | None:

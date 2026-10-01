@@ -7,7 +7,7 @@ from typing import Literal
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from opentelemetry import trace
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 
 from switchboard.investigation.agent import policy_review_model
 from switchboard.investigation.deadline import require_time
@@ -35,8 +35,17 @@ class PolicyIssue(Record):
     claim: Text
     policy_id: Text
     policy_excerpt: Text
-    issue_kind: PolicyIssueKind
     explanation: Text
+    issue_kind: PolicyIssueKind = Field(
+        description=(
+            "Classify the REPORT's claim, not the POLICY's instruction: "
+            "missing_required_condition: REPORT allows X when a POLICY safeguard "
+            "for X is unmet; invented_absolute_prohibition: REPORT forbids X that "
+            "POLICY allows; invented_requirement: REPORT demands an additional "
+            "step POLICY does not require; contradicts_policy: REPORT allows X "
+            "that POLICY never allows, or another conflict not matching those kinds."
+        )
+    )
 
 
 class PolicyReview(Record):

@@ -24,6 +24,7 @@ from switchboard.models import (
     Proposal,
     VerifyDeliveryResult,
 )
+from switchboard.workflow import signal
 from switchboard.workflow_status import WorkflowStatus, proposal_status
 
 router = APIRouter(prefix="/api")
@@ -119,7 +120,9 @@ def record_approval(
     context = review_context(run_id=run_id, request_context=request_context)
     try:
         with employee_session(context) as session:
-            return approve_proposal(session=session, proposal_id=proposal_id)
+            approval = approve_proposal(session=session, proposal_id=proposal_id)
+            signal(request_context.storage, run_id, "approval")
+            return approval
     except PermissionError:
         raise HTTPException(
             status_code=403, detail="Approval not permitted or proposal unavailable"
@@ -142,11 +145,13 @@ def record_execution(
     context = review_context(run_id=run_id, request_context=request_context)
     try:
         with employee_session(context) as session:
-            return execute_proposal(
+            result = execute_proposal(
                 proposal_id=proposal_id,
                 session=session,
                 executed_at=datetime.now(timezone.utc),
             )
+            signal(request_context.storage, run_id, "execution")
+            return result
     except PermissionError:
         raise HTTPException(
             status_code=403, detail="Execution not permitted or proposal unavailable"
@@ -170,11 +175,13 @@ def record_delivery_verification(
     context = review_context(run_id=run_id, request_context=request_context)
     try:
         with employee_session(context) as session:
-            return verify_execution_delivery(
+            result = verify_execution_delivery(
                 proposal_id=proposal_id,
                 session=session,
                 verified_at=datetime.now(timezone.utc),
             )
+            signal(request_context.storage, run_id, "verification")
+            return result
     except PermissionError:
         raise HTTPException(
             status_code=403,

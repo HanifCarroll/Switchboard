@@ -10,18 +10,26 @@ flowchart LR
     CloudFront --> Website[Next.js website Lambda]
     CloudFront --> API[FastAPI Lambda]
     API --> DynamoDB
-    API --> SQS
+    API --> Workflow[Step Functions change workflow]
+    Workflow --> SQS
+    Workflow --> API
+    API --> Receiver[Signed webhook receiver Lambda]
+    Receiver --> DynamoDB
+    API --> SSM[Parameter Store]
+    Worker --> SSM
     SQS --> Worker[Investigation Lambda]
     Worker --> DynamoDB
     Worker --> Model[Configured model provider: DeepSeek or Bedrock]
     API -. traces .-> XRay[AWS X-Ray]
     Worker -. traces .-> XRay
-    CloudWatch[CloudWatch alarms] --> SNS[SNS notifications]
+    CloudWatch[CloudWatch alarms] --> AlertEvents[SNS alarm events]
+    AlertEvents --> Formatter[Email formatter Lambda]
+    Formatter --> SNS[SNS email notifications]
     SQS --> DLQ[Dead-letter queue]
     Scheduler[EventBridge Scheduler] --> API
 ```
 
-The website runs Next.js through AWS Lambda Web Adapter. Mangum adapts HTTP events to the existing FastAPI routes. The worker handles SQS events directly; it does not run an HTTP server. Scheduler invokes an internal maintenance event, separate from public API routes.
+The website runs Next.js through AWS Lambda Web Adapter. Mangum adapts HTTP events to the existing FastAPI routes. The controlled receiver accepts signed HTTP deliveries and stores its own receipts. The worker handles SQS events directly; it does not run an HTTP server. Scheduler invokes an internal maintenance event, separate from public API routes.
 
 CloudFront routes `/api/*` to the API and other paths to the website. Both Function URLs require AWS IAM authentication and Origin Access Control. HTML, API responses, and Next.js navigation responses are uncached; fingerprinted static assets are cached. Application tokens use a separate header from CloudFront's infrastructure signature. Mutation bodies include a SHA-256 digest; browser code contains no AWS credentials.
 
@@ -41,13 +49,15 @@ Key implementation: [workflow](../backend/switchboard/investigation/workflow.py)
 
 A production proposal requires approval from a different technical lead assigned to its customer. Execution rechecks the actor, approval, change window, and configuration version. The integration update and execution receipt commit in one transaction. A repeat returns the existing receipt instead of changing the configuration again.
 
-Verification checks that the executed endpoint and version remain active, then records a synthetic test event. The verification receipt and ticket outcome commit together. Successful verification closes the request; failure or uncertainty requires manual intervention. Automatic rollback is not authorized by the current proposal model.
+Verification checks that the executed endpoint and version remain active, then sends a signed synthetic event to the separate receiver Lambda. The destination must belong to the configured receiver; redirects and unrelated hosts are rejected. The receiver persists one receipt per event ID. The client checks the destination, event ID, and payload hash before reporting delivery. A timeout remains inconclusive even if the event may have arrived. The verification receipt and ticket outcome commit together. Successful verification closes the request; failure or uncertainty requires manual intervention. Automatic rollback is not authorized by the current proposal model.
 
 Key implementation: [change management](../backend/switchboard/change_management.py), [delivery verification](../backend/switchboard/delivery_verification.py), and [workflow status](../backend/switchboard/workflow_status.py).
 
 ## Durable jobs
 
-The API authorizes the ticket, then atomically saves a job, idempotency lookup, and active-job marker before sending the SQS message. A failed send leaves recoverable work. Retrying the same request attempts dispatch again; scheduled maintenance also recovers pending submissions.
+The API authorizes the ticket, then atomically saves a job, idempotency lookup, and active-job marker before starting a named Step Functions execution. A failed start leaves recoverable work. Retrying the same request attempts dispatch again; scheduled maintenance also recovers pending submissions.
+
+Step Functions sends the investigation to SQS with a callback token. The worker acknowledges the workflow after saving a completed result or a permanent failure. Production proposals wait for independent approval; all proposals then wait for explicit execution and delivery verification. Private callback tokens are stored separately from public reports. Callbacks use saved receipts, so an action committed before wait registration still advances. Hourly maintenance recovers callbacks lost after a business action. Executions have a 24-hour limit and stop for manual intervention on unconfirmed delivery. Step Functions coordinates stages; the existing application checks still authorize each action.
 
 A worker claims a lease beyond its invocation deadline. Writes check the lease owner, workspace generation, and current business access. An active duplicate does not start another investigation; terminal duplicates return without model calls. Transient failures use SQS retries. Permanent access, input, or output failures become durable failed jobs.
 
@@ -55,7 +65,7 @@ Saved validated output can be reused after a publication failure. A crash before
 
 Dead-letter maintenance saves failure state before removing the message and never replaces a completed result. It also cleans expired workspaces and retired generations. Browser polling stops at completed or failed states, and run URLs restore progress after reload.
 
-Key implementation: [jobs](../backend/switchboard/jobs.py), [maintenance](../backend/switchboard/maintenance.py), and [deadline handling](../backend/switchboard/investigation/deadline.py).
+Key implementation: [outer workflow](../backend/switchboard/workflow.py), [jobs](../backend/switchboard/jobs.py), [maintenance](../backend/switchboard/maintenance.py), and [deadline handling](../backend/switchboard/investigation/deadline.py).
 
 ## Data and identity
 
@@ -67,12 +77,18 @@ Anonymous visitors receive Secure, HttpOnly, SameSite cookies and isolated works
 
 Key implementation: [DynamoDB operations](../backend/switchboard/dynamodb.py), [request context](../backend/switchboard/api/context.py), and [authentication](../backend/switchboard/auth.py).
 
+## Configuration and infrastructure
+
+CloudFormation defines the hosting and protected origins, CloudFront subscription, queues and worker connection, hourly schedule, state machine, shared configuration parameter, and monitoring. Code releases publish immutable versions; the receiver alias is promoted through a stack parameter. API, worker, and website aliases support independent application releases.
+
+Runtime settings come from a cached Standard Parameter Store entry. The worker obtains its direct-provider credential from a separate SecureString parameter encrypted with the AWS-managed SSM key. API, website, and receiver roles cannot read that credential. SecureString is supplied separately because CloudFormation does not support creating that parameter type. Values are refreshed when a new function version starts.
+
 ## Observability
 
-CloudWatch retains structured logs for seven days and supplies a dashboard for Lambda, SQS, DynamoDB, Bedrock, and failed investigations. Standard alarms notify an SNS topic about function errors, sustained queue age, dead-letter messages, and permanently rejected investigations. A policy-blocked investigation is a successful report, not an operational failure. Email subscriptions require SNS confirmation.
+CloudWatch retains structured logs for seven days and supplies a dashboard for Lambda, Step Functions, SQS, DynamoDB, Bedrock, and failed investigations. Standard alarms notify an SNS topic about function errors, sustained queue age, dead-letter messages, and permanently rejected investigations, failed workflows, and workflow timeouts. A policy-blocked investigation is a successful report, not an operational failure. An internal SNS topic delivers alarm events to a small Lambda that creates readable email subjects and explanations, timestamps, and investigation links. It publishes only to the existing email topic. Email subscriptions require SNS confirmation.
 
-All functions enable sampled Lambda tracing. API and worker functions use the pinned AWS Distro for OpenTelemetry Python layer to trace Lambda entry points and AWS SDK calls. This includes DynamoDB operations and SQS dispatch and processing. Metadata-only spans measure investigation model calls, policy reviews, report revisions, and IAM-signed Bedrock requests. The website uses Lambda invocation tracing. Generic HTTP instrumentation is disabled; model prompts, responses, credentials, and customer records are not added to trace attributes.
+All functions enable sampled Lambda tracing. API, receiver, and worker functions use the pinned AWS Distro for OpenTelemetry Python layer to trace Lambda entry points and AWS SDK calls. This includes DynamoDB operations and SQS dispatch and processing. Metadata-only spans measure investigation model calls, policy reviews, report revisions, and IAM-signed Bedrock requests. The website uses Lambda invocation tracing. Generic HTTP instrumentation is disabled; model prompts, responses, credentials, and customer records are not added to trace attributes.
 
 ## Scope
 
-The demo demonstrates live model investigation and a complete controlled business workflow over synthetic data. It does not establish real webhook delivery, production customer integration, an operator-success rate, or general model accuracy. Deterministic tests, live scenario checks, and deployed browser verification cover different parts of that contract.
+The demo demonstrates live model investigation and a complete controlled business workflow over synthetic data. Delivery is real HTTP between controlled AWS resources; the customer systems and payloads remain synthetic. It does not establish production customer integration, an operator-success rate, or general model accuracy. Deterministic tests, live scenario checks, and deployed browser verification cover different parts of that contract.

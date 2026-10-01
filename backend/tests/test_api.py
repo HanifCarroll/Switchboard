@@ -362,7 +362,9 @@ def test_manual_policy_review_endpoint_is_removed(storage):
     assert response.status_code == 404
 
 
-def test_executed_proposal_can_be_verified_and_reviewed(memory_store):
+def test_executed_proposal_can_be_verified_and_reviewed(
+    memory_store, delivered_delivery
+):
     base = memory_store.storage(workspace_id="unused")
     storage = open_demo_workspace(
         workspace_id=None, base_storage=base

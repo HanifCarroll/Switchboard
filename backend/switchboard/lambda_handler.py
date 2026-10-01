@@ -15,6 +15,10 @@ def handler(event, context):
         from switchboard.maintenance import maintain
 
         return maintain(context)
+    if event.get("source") == "switchboard.workflow" and "requestContext" not in event:
+        from switchboard.workflow import handle
+
+        return handle(event)
     if "requestContext" not in event:
         raise ValueError("Unsupported invocation")
 

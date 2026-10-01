@@ -2,11 +2,11 @@
 
 [Live application](https://d3ar9mvnjcwzyk.cloudfront.net) · [Architecture](../docs/architecture.md)
 
-The deployment uses three Lambda functions: a Next.js website through AWS Lambda Web Adapter, a FastAPI API through Mangum, and a native Python investigation worker. DynamoDB stores application data; SQS delivers jobs; EventBridge Scheduler runs maintenance. CloudFront protects and routes the website and API origins.
+The deployment uses four Lambda functions: a Next.js website through AWS Lambda Web Adapter, a FastAPI API through Mangum, a native Python investigation worker, and a signed webhook receiver. Step Functions coordinates the investigation and subsequent manual actions. Parameter Store holds runtime settings and the encrypted model credential. DynamoDB stores application data; SQS delivers jobs; EventBridge Scheduler runs maintenance. CloudFront protects and routes the website and API origins. A small notification Lambda formats operational emails through SNS.
 
 ## Deploy
 
-Requirements: Python 3.12 for production packages, uv, Node.js 24, and an authenticated AWS CLI profile in `us-east-1`. Install dependencies in `backend/` and `frontend/`. The Bedrock adapter uses the worker execution role and supports `deepseek.v3.2` and `openai.gpt-6-luna` in `us-east-1`. A release preserves the currently selected provider and Bedrock model unless explicitly overridden. The direct DeepSeek provider reads its key from the environment or ignored `backend/.env`, or retains the configured worker key. Bedrock releases omit that key.
+Requirements: Python 3.12 for production packages, uv, Node.js 24, and an authenticated AWS CLI profile in `us-east-1`. Install dependencies in `backend/` and `frontend/`. The Bedrock adapter uses the worker execution role and supports `deepseek.v3.2` and `openai.gpt-6-luna` in `us-east-1`. A release preserves the currently selected provider and Bedrock model unless explicitly overridden. Initial provisioning copies the direct-provider key from the environment or ignored `backend/.env` into `/switchboard/live/deepseek-api-key` as a Standard SecureString using the AWS-managed SSM key. Existing parameters are preserved. Active DeepSeek worker versions reference the parameter rather than storing its value in their environment; Bedrock versions omit that reference.
 
 From the repository root:
 
@@ -18,7 +18,7 @@ uv run --project backend python scripts/aws.py jobs --profile hc-studio
 uv run --project backend python scripts/aws.py delivery --profile hc-studio
 ```
 
-`template.json` owns the database, queues, functions, logs, alarms, dashboard, SNS topic/subscription, and IAM roles through CloudFormation. The helper manages code versions, aliases, Function URLs, CloudFront/OAC/WAF, queue mapping, and scheduled invocation. Use `provision` for infrastructure changes and `release` for application code.
+`template.json` owns hosting, Function URLs, CloudFront/OAC/WAF and its subscription, storage, queues and worker mapping, maintenance schedule, Step Functions, the shared settings parameter, monitoring, and IAM roles. SecureString credentials are supplied separately because CloudFormation does not support that parameter type. The helper publishes code versions and selects live aliases; the receiver alias is promoted through the `ReceiverVersion` stack parameter. The `jobs` and `delivery` commands verify stack-owned resources. Use `provision` for infrastructure changes and `release` for application code.
 
 Backend builds use Linux Python 3.12 wheels. Website builds include Next.js standalone output, public files, static assets, and one previous release's assets. ZIPs upload directly to Lambda. Package and response limits are checked before deployment.
 
@@ -30,7 +30,7 @@ uv run --project backend python scripts/aws.py release --component website --pro
 uv run --project backend python scripts/aws.py rollback --component website --profile hc-studio
 ```
 
-Use `--component backend` for API and worker, or `--component all` for all functions. Published versions are immutable; `live` aliases select the active release. Keep API/frontend contracts compatible during independent releases. In-flight invocations can finish on their previous version.
+Use `--component backend` for API, worker, and receiver, or `--component all` for all functions. Published versions are immutable; `live` aliases select the active release. Keep API/frontend contracts compatible during independent releases. In-flight invocations can finish on their previous version.
 
 The helper saves previous aliases before changing each component to ignored `aws/local/previous-aliases.json`, and package hashes/sizes to `aws/local/packaging.json`. Keep the desired receipt before another release replaces it. Forward releases retain one older static asset set; rollback may require a page reload because an older ZIP cannot contain a future release's assets.
 
@@ -38,13 +38,13 @@ The helper saves previous aliases before changing each component to ignored `aws
 
 The workflow runs backend and frontend checks, then assumes a repository-scoped role through GitHub OIDC. Set `AWS_ROLE_ARN` to the deployment role. Its trust policy matches GitHub's immutable owner/repository IDs and this repository's `main` branch. Layer access is limited to the pinned Web Adapter and OpenTelemetry layer versions. Main pushes release all functions; manual runs can select a component. Release receipts are saved as Actions artifacts, including after partial failure.
 
-Runtime roles are scoped to application resources. Function URLs require AWS IAM signing and CloudFront Origin Access Control. Only the worker can invoke the configured model in the default Bedrock Mantle project and standard service tier. Direct-provider credentials belong only in the worker's private environment; they are not bundled into the website or copied into GitHub secrets.
+Runtime roles are scoped to application resources. Function URLs require AWS IAM signing and CloudFront Origin Access Control. Only the worker can invoke the configured model in the default Bedrock Mantle project and standard service tier. Only the worker role can read and decrypt the direct-provider credential in Parameter Store; they are not bundled into the website or copied into GitHub secrets.
 
 ## Inspect and recover jobs
 
 The worker processes one SQS message per invocation, with maximum concurrency two. Its timeout is 300 seconds; queue visibility is 1,800 seconds. Source retention is four days, dead-letter retention is 14 days, and five receives move a message to the DLQ. A hard failure can therefore have a substantial delay before retry.
 
-Maintenance runs hourly. It recovers pending dispatch, saves DLQ failures before removing messages, and cleans expired or retired data. Trigger the same internal handler when needed:
+Maintenance runs hourly. It recovers pending workflow starts and callbacks lost after committed actions, saves DLQ failures before removing messages, and cleans expired or retired data. Trigger the same internal handler when needed:
 
 ```sh
 aws lambda invoke --profile hc-studio --function-name switchboard-api:live \
@@ -52,7 +52,7 @@ aws lambda invoke --profile hc-studio --function-name switchboard-api:live \
   --payload '{"source":"switchboard.maintenance"}' aws/local/maintenance.json
 ```
 
-Check the response and CloudWatch logs; an invocation acknowledgement alone does not establish success. Logs include run IDs, stages, and attempts, with seven-day retention. Public HTTP requests cannot invoke maintenance.
+Check the response and CloudWatch logs; an invocation acknowledgement alone does not establish success. Logs include run IDs, stages, and attempts, with seven-day retention. Public HTTP requests cannot invoke maintenance or register workflow callbacks.
 
 Investigate repeated failures before requesting another run. Terminal jobs are not automatically replayed. Operator replay requires current access and generation checks; do not blindly redrive stale messages or clear a live worker's lease. Saved validated output avoids repeated model work after some publication failures; work before the checkpoint may repeat.
 
@@ -62,7 +62,7 @@ Investigate repeated failures before requesting another run. Terminal jobs are n
 uv run --project backend python scripts/verify_aws.py --profile hc-studio
 ```
 
-This creates an isolated verification workspace and checks duplicate proposals, atomic receipts, chunked results, and generation fences against DynamoDB, then removes that test workspace. With local development running, use DynamoDB Local instead:
+This creates an isolated verification workspace and checks duplicate proposals, atomic receipts, chunked results, and generation fences against DynamoDB, then removes that test workspace. The AWS check also confirms an actual signed receiver delivery. With local development running, the local variant checks storage and generation fences without calling the AWS receiver:
 
 ```sh
 AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local AWS_DEFAULT_REGION=us-east-1 \
@@ -74,15 +74,16 @@ Local development uses Amazon's official [DynamoDB Local](https://docs.aws.amazo
 
 ## Monitoring and alerts
 
-Open the `switchboard` CloudWatch dashboard in `us-east-1`. Six standard alarms send notifications to the `switchboard-alerts` SNS topic:
+Open the `switchboard` CloudWatch dashboard in `us-east-1`. Nine standard alarms publish to the internal `switchboard-alarm-events` topic. A Lambda formats a clear subject, plain-language explanation, UTC timestamp, and investigation links, then publishes to `switchboard-alerts` for the existing email subscription. Raw metric payloads remain in CloudWatch:
 
 | Alarm | Trigger | First check |
 | --- | --- | --- |
-| APIErrors / WebsiteErrors | An invocation error within five minutes | Function logs and the corresponding trace |
+| APIErrors / WebsiteErrors / ReceiverErrors | An invocation error within five minutes | Function logs and the corresponding trace |
 | WorkerErrors | An invocation error within five minutes | Worker logs, model access, and transient service errors |
 | QueueBacklog | Oldest queued message exceeds 15 minutes for two five-minute periods | Worker concurrency, retries, and queue visibility |
 | DeadLetterJobs | A visible dead-letter message | Saved job state, worker logs, and maintenance results |
 | RejectedJobs | A permanently rejected investigation | Worker logs and current access/output validation |
+| WorkflowFailures / WorkflowTimeouts | A failed or timed-out execution | Step Functions execution history and saved action receipts |
 
 Connect an email recipient with `provision --alert-email you@example.com`. Confirm the SNS subscription from that inbox; until confirmation, the alarms and topic work but email delivery remains pending. Later provisions retain the recipient when the option is omitted. Pass an empty string to remove the email subscription.
 
@@ -90,9 +91,9 @@ Policy-blocked reports complete normally and do not trigger the rejected-job met
 
 ## Tracing
 
-All Lambda versions enable active tracing. API and worker packages use a pinned OpenTelemetry layer with AWS SDK and Lambda instrumentation; the website retains its Web Adapter and native invocation tracing. The packaging receipt includes the tracing layer's uncompressed size in the Lambda limit check. Tracing permissions grant only X-Ray segment/telemetry publishing; deployment can read only the two pinned layers.
+All Lambda versions enable active tracing. API, worker, and receiver packages use a pinned OpenTelemetry layer with AWS SDK and Lambda instrumentation; the website retains its Web Adapter and native invocation tracing. The packaging receipt includes the tracing layer's uncompressed size in the Lambda limit check. Tracing permissions grant only X-Ray segment/telemetry publishing; deployment can read only the two pinned layers.
 
-In CloudWatch Traces, filter by `switchboard-api` or `switchboard-worker` and inspect database, queue, and Bedrock timings. Sampling means not every request has a trace. Generic HTTP instrumentation and telemetry logs/metrics exporters are disabled. Model and policy stages record timings. Bedrock request spans also record the model ID and HTTP status; application records, prompts, credentials, and headers are not supplied as trace attributes. Its SDK uses a placeholder key that the signing adapter replaces with refreshed IAM credentials for each request. Requests to another host or path are rejected before signing.
+In CloudWatch Traces, filter by `switchboard-api`, `switchboard-worker`, or `switchboard-receiver` and inspect database, queue, and Bedrock timings. Sampling means not every request has a trace. Generic HTTP instrumentation and telemetry logs/metrics exporters are disabled. Model and policy stages record timings. Bedrock request spans also record the model ID and HTTP status; application records, prompts, credentials, and headers are not supplied as trace attributes. Its SDK uses a placeholder key that the signing adapter replaces with refreshed IAM credentials for each request. Requests to another host or path are rejected before signing.
 
 ## Check Bedrock access
 

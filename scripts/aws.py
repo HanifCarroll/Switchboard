@@ -104,7 +104,16 @@ def build(component, session):
         for name in ["fixtures", "scenarios"]:
             shutil.copytree(ROOT / "backend" / "data" / name, directory / "data" / name)
         # Ship only the AWS service definitions used by the application.
-        services = {"bedrock", "bedrock-runtime", "dynamodb", "sqs", "sts", "xray"}
+        services = {
+            "bedrock",
+            "bedrock-runtime",
+            "dynamodb",
+            "sqs",
+            "ssm",
+            "stepfunctions",
+            "sts",
+            "xray",
+        }
         for service in (directory / "botocore" / "data").iterdir():
             if service.is_dir() and service.name not in services:
                 shutil.rmtree(service)
@@ -118,12 +127,16 @@ def build(component, session):
                     "3.12",
                     "python",
                     "-c",
-                    "from switchboard.lambda_handler import handler; "
-                    "from switchboard.jobs import worker_handler; "
-                    "from switchboard.investigation.agent import create_model; "
-                    "import boto3; "
-                    "[boto3.client(name) for name in ('dynamodb', 'sqs', 'xray', 'sts')]; "
-                    "assert create_model().model_name == 'deepseek.v3.2'",
+                    (
+                        "from switchboard.lambda_handler import handler; "
+                        "from switchboard.jobs import worker_handler; "
+                        "from switchboard.receiver import handler as receiver; "
+                        "from switchboard.workflow import handle; "
+                        "from switchboard.investigation.agent import create_model; "
+                        "import boto3; "
+                        "[boto3.client(name) for name in ('dynamodb', 'sqs', 'ssm', 'stepfunctions', 'xray', 'sts')]; "
+                        "assert create_model().model_name == 'deepseek.v3.2'"
+                    ),
                 ],
                 directory,
                 {
@@ -230,10 +243,13 @@ def build(component, session):
 
 
 def provision(session, alert_email=None):
+    provision_model_key(session)
     client = session.client("cloudformation")
     arguments = {
         "StackName": "switchboard",
-        "TemplateBody": (ROOT / "aws" / "template.json").read_text(),
+        "TemplateBody": json.dumps(
+            json.loads((ROOT / "aws" / "template.json").read_text())
+        ),
         "Capabilities": ["CAPABILITY_NAMED_IAM"],
     }
     try:
@@ -248,17 +264,16 @@ def provision(session, alert_email=None):
         client.create_stack(**arguments)
         waiter = "stack_create_complete"
     else:
+        arguments["Parameters"] = [
+            {"ParameterKey": item["ParameterKey"], "UsePreviousValue": True}
+            for item in existing.get("Parameters", [])
+        ]
         if alert_email is not None:
             arguments["Parameters"] = [
-                {"ParameterKey": "AlertEmail", "ParameterValue": alert_email}
-            ]
-        elif any(
-            item["ParameterKey"] == "AlertEmail"
-            for item in existing.get("Parameters", [])
-        ):
-            arguments["Parameters"] = [
-                {"ParameterKey": "AlertEmail", "UsePreviousValue": True}
-            ]
+                item
+                for item in arguments["Parameters"]
+                if item["ParameterKey"] != "AlertEmail"
+            ] + [{"ParameterKey": "AlertEmail", "ParameterValue": alert_email}]
         try:
             client.update_stack(**arguments)
         except ClientError as error:
@@ -300,17 +315,13 @@ def release(session, component, mode="live", model_provider=None, bedrock_model=
     }
     if mode != "live":
         raise ValueError("Hosted fixture execution is disabled")
-    model_key = os.getenv("DEEPSEEK_API_KEY") or dotenv_values(
-        ROOT / "backend" / ".env"
-    ).get("DEEPSEEK_API_KEY")
-
     # 2. Publish immutable versions; each component keeps its own live alias.
     for name in (
-        ["api", "worker"]
+        ["receiver", "worker", "api"]
         if component == "backend"
         else ["website"]
         if component == "website"
-        else ["api", "worker", "website"]
+        else ["receiver", "worker", "api", "website"]
     ):
         function = f"switchboard-{name}"
         try:
@@ -328,6 +339,8 @@ def release(session, component, mode="live", model_provider=None, bedrock_model=
             OTEL_LOGS_EXPORTER="none",
             OTEL_PYTHON_DISABLED_INSTRUMENTATIONS="fastapi,httpx,requests,urllib,urllib3",
         )
+        if name in {"api", "worker"}:
+            env["SWITCHBOARD_CONFIG_PARAMETER"] = values["RuntimeParameter"]
         env["INVESTIGATION_QUEUE_URL"] = values["Investigations"]
         if name == "api":
             env["INVESTIGATION_DLQ_URL"] = values["DeadLetters"]
@@ -351,14 +364,8 @@ def release(session, component, mode="live", model_provider=None, bedrock_model=
                 env["SWITCHBOARD_BEDROCK_MODEL"] = bedrock_model or current_env.get(
                     "SWITCHBOARD_BEDROCK_MODEL", "deepseek.v3.2"
                 )
-            if not model_key:
-                model_key = current_env.get("DEEPSEEK_API_KEY")
-            if provider == "deepseek" and not model_key:
-                raise RuntimeError(
-                    "DEEPSEEK_API_KEY is required for initial worker deployment"
-                )
             if provider == "deepseek":
-                env["DEEPSEEK_API_KEY"] = model_key
+                env["DEEPSEEK_KEY_PARAMETER"] = values["ModelKeyParameter"]
         if name == "website":
             env = {
                 "AWS_LAMBDA_EXEC_WRAPPER": "/opt/bootstrap",
@@ -375,6 +382,8 @@ def release(session, component, mode="live", model_provider=None, bedrock_model=
             if name == "website"
             else "switchboard.jobs.worker_handler"
             if name == "worker"
+            else "switchboard.receiver.handler"
+            if name == "receiver"
             else "switchboard.lambda_handler.handler",
             Environment={"Variables": env},
             Layers=[LAYER] if name == "website" else [TRACE_LAYER],
@@ -389,7 +398,9 @@ def release(session, component, mode="live", model_provider=None, bedrock_model=
         )
         client.get_waiter("function_updated_v2").wait(FunctionName=function)
         version = client.publish_version(FunctionName=function)["Version"]
-        if name in previous:
+        if name == "receiver":
+            promote_receiver(session, version)
+        elif name in previous:
             client.update_alias(
                 FunctionName=function, Name="live", FunctionVersion=version
             )
@@ -400,292 +411,97 @@ def release(session, component, mode="live", model_provider=None, bedrock_model=
         print(f"Published {name} version {version}.", flush=True)
 
 
+def provision_model_key(session):
+    """SecureString is provisioned separately because CloudFormation lacks that type."""
+    name = "/switchboard/live/deepseek-api-key"
+    client = session.client("ssm")
+    try:
+        client.get_parameter(Name=name)
+        return
+    except client.exceptions.ParameterNotFound:
+        pass
+    value = os.getenv("DEEPSEEK_API_KEY") or dotenv_values(
+        ROOT / "backend" / ".env"
+    ).get("DEEPSEEK_API_KEY")
+    if not value:
+        configuration = session.client("lambda").get_function_configuration(
+            FunctionName="switchboard-worker", Qualifier="live"
+        )
+        value = (
+            configuration.get("Environment", {})
+            .get("Variables", {})
+            .get("DEEPSEEK_API_KEY")
+        )
+    if not value:
+        raise RuntimeError(
+            "A model credential is required to provision Parameter Store"
+        )
+    client.put_parameter(
+        Name=name,
+        Value=value,
+        Type="SecureString",
+        Tier="Standard",
+        KeyId="alias/aws/ssm",
+    )
+    print("Encrypted model credential stored in Parameter Store.")
+
+
+def promote_receiver(session, version):
+    """Change the CloudFormation-owned alias without changing infrastructure."""
+    client = session.client("cloudformation")
+    stack = client.describe_stacks(StackName="switchboard")["Stacks"][0]
+    parameters = [
+        {"ParameterKey": item["ParameterKey"], "UsePreviousValue": True}
+        for item in stack.get("Parameters", [])
+        if item["ParameterKey"] != "ReceiverVersion"
+    ]
+    parameters.append({"ParameterKey": "ReceiverVersion", "ParameterValue": version})
+    client.update_stack(
+        StackName="switchboard",
+        UsePreviousTemplate=True,
+        Parameters=parameters,
+        Capabilities=["CAPABILITY_NAMED_IAM"],
+    )
+    client.get_waiter("stack_update_complete").wait(
+        StackName="switchboard", WaiterConfig={"Delay": 5, "MaxAttempts": 120}
+    )
+
+
 def connect_jobs(session):
     values = outputs(session)
-    client = session.client("lambda")
-    target = values["WorkerArn"] + ":live"
-    mappings = client.list_event_source_mappings(
-        FunctionName=target,
-        EventSourceArn=session.client("sqs").get_queue_attributes(
-            QueueUrl=values["Investigations"], AttributeNames=["QueueArn"]
-        )["Attributes"]["QueueArn"],
+    mappings = session.client("lambda").list_event_source_mappings(
+        FunctionName=values["WorkerArn"] + ":live"
     )["EventSourceMappings"]
-    if not mappings:
-        source = session.client("sqs").get_queue_attributes(
-            QueueUrl=values["Investigations"], AttributeNames=["QueueArn"]
-        )["Attributes"]["QueueArn"]
-        client.create_event_source_mapping(
-            EventSourceArn=source,
-            FunctionName=target,
-            BatchSize=1,
-            MaximumBatchingWindowInSeconds=0,
-            ScalingConfig={"MaximumConcurrency": 2},
-            Enabled=True,
+    schedule = session.client("scheduler").get_schedule(Name="switchboard-maintenance")
+    if (
+        not mappings
+        or mappings[0]["State"] != "Enabled"
+        or schedule["State"] != "ENABLED"
+    ):
+        raise RuntimeError(
+            "CloudFormation worker or maintenance connection is unavailable"
         )
-    scheduler = session.client("scheduler")
-    arguments = {
-        "Name": "switchboard-maintenance",
-        "ScheduleExpression": "rate(1 hour)",
-        "FlexibleTimeWindow": {"Mode": "OFF"},
-        "State": "ENABLED",
-        "Target": {
-            "Arn": values["APIArn"] + ":live",
-            "RoleArn": values["SchedulerRoleArn"],
-            "Input": '{"source":"switchboard.maintenance"}',
-            "RetryPolicy": {
-                "MaximumRetryAttempts": 2,
-                "MaximumEventAgeInSeconds": 3600,
-            },
-        },
-    }
-    try:
-        scheduler.get_schedule(Name=arguments["Name"])
-    except scheduler.exceptions.ResourceNotFoundException:
-        scheduler.create_schedule(**arguments)
-    else:
-        scheduler.update_schedule(**arguments)
-    print("Connected SQS worker and hourly maintenance.")
+    print("CloudFormation worker and maintenance connections verified.")
 
 
 def delivery(session):
-    lambdas = session.client("lambda")
-    cloudfront = session.client("cloudfront")
-    pricing = session.client("pricing-plan-manager")
-    waf = session.client("wafv2")
-    origins = []
-    for name in ["api", "website"]:
-        function = f"switchboard-{name}"
-        try:
-            response = lambdas.get_function_url_config(
-                FunctionName=function, Qualifier="live"
-            )
-        except lambdas.exceptions.ResourceNotFoundException:
-            response = lambdas.create_function_url_config(
-                FunctionName=function,
-                Qualifier="live",
-                AuthType="AWS_IAM",
-                InvokeMode="BUFFERED",
-            )
-        if response["AuthType"] != "AWS_IAM":
-            raise RuntimeError("Origins must require AWS IAM")
-        origins.append(
-            {
-                "Id": name,
-                "DomainName": response["FunctionUrl"].split("/")[2],
-                "CustomOriginConfig": {
-                    "HTTPPort": 80,
-                    "HTTPSPort": 443,
-                    "OriginProtocolPolicy": "https-only",
-                    "OriginReadTimeout": 30,
-                    "OriginKeepaliveTimeout": 5,
-                    "OriginSslProtocols": {"Quantity": 1, "Items": ["TLSv1.2"]},
-                },
-                "OriginPath": "",
-                "ConnectionAttempts": 1,
-            }
-        )
-    controls = (
-        cloudfront.list_origin_access_controls()
-        .get("OriginAccessControlList", {})
-        .get("Items", [])
+    values = outputs(session)
+    subscriptions = session.client("pricing-plan-manager").list_subscriptions()[
+        "subscriptionSummaries"
+    ]
+    plan = next(
+        item for item in subscriptions if item["arn"] == values["DeliveryPlanArn"]
     )
-    control = next(
-        (item for item in controls if item["Name"] == "switchboard-lambda"), None
-    )
-    if control is None:
-        control = cloudfront.create_origin_access_control(
-            OriginAccessControlConfig={
-                "Name": "switchboard-lambda",
-                "Description": "Protect Switchboard Lambda URLs",
-                "SigningProtocol": "sigv4",
-                "SigningBehavior": "always",
-                "OriginAccessControlOriginType": "lambda",
-            }
-        )["OriginAccessControl"]
-    for origin in origins:
-        origin["OriginAccessControlId"] = control["Id"]
-    caches = {
-        item["CachePolicy"]["CachePolicyConfig"]["Name"]: item["CachePolicy"]["Id"]
-        for item in cloudfront.list_cache_policies(Type="managed")["CachePolicyList"][
-            "Items"
-        ]
-    }
-    forwards = {
-        item["OriginRequestPolicy"]["OriginRequestPolicyConfig"]["Name"]: item[
-            "OriginRequestPolicy"
-        ]["Id"]
-        for item in cloudfront.list_origin_request_policies(Type="managed")[
-            "OriginRequestPolicyList"
-        ]["Items"]
-    }
-
-    def behavior(origin, cache, mutation=False):
-        methods = (
-            ["GET", "HEAD", "OPTIONS", "PUT", "PATCH", "POST", "DELETE"]
-            if mutation
-            else ["GET", "HEAD", "OPTIONS"]
-        )
-        return {
-            "TargetOriginId": origin,
-            "ViewerProtocolPolicy": "redirect-to-https",
-            "AllowedMethods": {
-                "Quantity": len(methods),
-                "Items": methods,
-                "CachedMethods": {"Quantity": 2, "Items": ["GET", "HEAD"]},
-            },
-            "Compress": True,
-            "CachePolicyId": caches[cache],
-            "OriginRequestPolicyId": forwards["Managed-AllViewerExceptHostHeader"],
-        }
-
-    LOCAL.mkdir(parents=True, exist_ok=True)
-    path = LOCAL / "delivery.json"
-    current = json.loads(path.read_text()) if path.exists() else None
-    if not current:
-        distributions = (
-            cloudfront.list_distributions().get("DistributionList", {}).get("Items", [])
-        )
-        existing = next(
-            (item for item in distributions if item["Comment"] == "Switchboard AWS"),
-            None,
-        )
-        if existing:
-            current = {
-                "id": existing["Id"],
-                "arn": existing["ARN"],
-                "url": "https://" + existing["DomainName"],
-                "web_acl": existing["WebACLId"],
-            }
-    if not current:
-        # Create disabled delivery first. No public request reaches an unverified plan.
-        acls = waf.list_web_acls(Scope="CLOUDFRONT")["WebACLs"]
-        acl = next((item for item in acls if item["Name"] == "switchboard"), None)
-        if acl is None:
-            acl = waf.create_web_acl(
-                Name="switchboard",
-                Scope="CLOUDFRONT",
-                DefaultAction={"Allow": {}},
-                Description="Included in Switchboard CloudFront Free subscription",
-                Rules=[
-                    {
-                        "Name": "LimitRequests",
-                        "Priority": 0,
-                        "Statement": {
-                            "RateBasedStatement": {
-                                "Limit": 1000,
-                                "AggregateKeyType": "IP",
-                            }
-                        },
-                        "Action": {"Block": {}},
-                        "VisibilityConfig": {
-                            "SampledRequestsEnabled": False,
-                            "CloudWatchMetricsEnabled": False,
-                            "MetricName": "switchboard-api-limit",
-                        },
-                    }
-                ],
-                VisibilityConfig={
-                    "SampledRequestsEnabled": False,
-                    "CloudWatchMetricsEnabled": False,
-                    "MetricName": "switchboard",
-                },
-            )["Summary"]
-        config = {
-            "CallerReference": "switchboard",
-            "Aliases": {"Quantity": 0},
-            "Origins": {"Quantity": 2, "Items": origins},
-            "DefaultCacheBehavior": behavior("website", "Managed-CachingDisabled"),
-            "CacheBehaviors": {
-                "Quantity": 2,
-                "Items": [
-                    {
-                        "PathPattern": "/api/*",
-                        **behavior("api", "Managed-CachingDisabled", True),
-                    },
-                    {
-                        "PathPattern": "/_next/static/*",
-                        **behavior("website", "Managed-CachingOptimized"),
-                    },
-                ],
-            },
-            "Comment": "Switchboard AWS",
-            "Enabled": False,
-            "ViewerCertificate": {"CloudFrontDefaultCertificate": True},
-            "WebACLId": acl["ARN"],
-            "HttpVersion": "http2",
-            "IsIPV6Enabled": True,
-        }
-        distribution = cloudfront.create_distribution(DistributionConfig=config)[
-            "Distribution"
-        ]
-        current = {
-            "id": distribution["Id"],
-            "arn": distribution["ARN"],
-            "url": "https://" + distribution["DomainName"],
-            "web_acl": acl["ARN"],
-        }
-        path.write_text(json.dumps(current, indent=2) + "\n")
-    subscriptions = pricing.list_subscriptions()["subscriptionSummaries"]
-    subscription = next(
-        (
-            item
-            for item in subscriptions
-            if current["arn"] in item.get("resourceArns", [])
-        ),
-        None,
-    )
-    if subscription is None:
-        subscription = pricing.create_subscription(
-            planFamily="CloudFront",
-            planTier="FREE",
-            resourceArns=[current["arn"], current["web_acl"]],
-            clientToken="switchboard-free-" + current["id"],
-        )
-    subscription = subscription.get("subscription", subscription)
-    if subscription.get("planTier") != "FREE" or subscription.get("status") != "ACTIVE":
+    if plan["planTier"] != "FREE" or plan["status"] != "ACTIVE":
         raise RuntimeError(
-            f"Free subscription is not active: {subscription.get('status')}"
+            "The CloudFront subscription is not the expected active plan"
         )
-    current["subscription"] = subscription
-    path.write_text(json.dumps(current, indent=2, default=str) + "\n")
-    print("CloudFront Free subscription created/verified.", flush=True)
-    for name in ["api", "website"]:
-        for action, suffix, extra in [
-            ("lambda:InvokeFunctionUrl", "url", {"FunctionUrlAuthType": "AWS_IAM"}),
-            ("lambda:InvokeFunction", "invoke", {"InvokedViaFunctionUrl": True}),
-        ]:
-            try:
-                lambdas.add_permission(
-                    FunctionName=f"switchboard-{name}",
-                    Qualifier="live",
-                    StatementId=f"cloudfront-{suffix}",
-                    Action=action,
-                    Principal="cloudfront.amazonaws.com",
-                    SourceArn=current["arn"],
-                    **extra,
-                )
-            except lambdas.exceptions.ResourceConflictException:
-                pass
-    response = cloudfront.get_distribution_config(Id=current["id"])
-    config = response["DistributionConfig"]
-    previous_origins = {item["Id"]: item for item in config["Origins"]["Items"]}
-    for origin in origins:
-        existing = previous_origins[origin["Id"]]
-        existing.update(origin)
-    config["Origins"]["Items"] = list(previous_origins.values())
-    config["DefaultCacheBehavior"].update(
-        behavior("website", "Managed-CachingDisabled")
-    )
-    for item in config["CacheBehaviors"]["Items"]:
-        if item["PathPattern"] == "/api/*":
-            item.update(behavior("api", "Managed-CachingDisabled", True))
-        elif item["PathPattern"] == "/_next/static/*":
-            item.update(behavior("website", "Managed-CachingOptimized"))
-    config["Enabled"] = True
-    cloudfront.update_distribution(
-        Id=current["id"], IfMatch=response["ETag"], DistributionConfig=config
-    )
-    print(current["url"], flush=True)
+    config = session.client("cloudfront").get_distribution_config(
+        Id=values["DeliveryId"]
+    )["DistributionConfig"]
+    if not config["Enabled"]:
+        raise RuntimeError("CloudFormation delivery is disabled")
+    print(values["DeliveryURL"])
 
 
 def main():
@@ -731,7 +547,7 @@ def main():
     else:
         previous = json.loads((LOCAL / "previous-aliases.json").read_text())
         names = (
-            {"api", "worker"}
+            {"api", "worker", "receiver"}
             if arguments.component == "backend"
             else {"website"}
             if arguments.component == "website"
@@ -740,9 +556,14 @@ def main():
         for name, version in previous.items():
             if name not in names:
                 continue
-            session.client("lambda").update_alias(
-                FunctionName=f"switchboard-{name}", Name="live", FunctionVersion=version
-            )
+            if name == "receiver":
+                promote_receiver(session, version)
+            else:
+                session.client("lambda").update_alias(
+                    FunctionName=f"switchboard-{name}",
+                    Name="live",
+                    FunctionVersion=version,
+                )
             print(f"Restored {name} version {version}.")
 
 

@@ -50,6 +50,9 @@ class WorkspaceStorage:
         return self._call("workspace.get")
 
     def reset_workspace(self, *, payload: dict) -> None:
+        from switchboard.demo.receivers import bind_receiver_destinations
+
+        payload = bind_receiver_destinations(payload)
         self._call("workspace.reset", payload)
 
     def delete_workspace(self) -> None:

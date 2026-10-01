@@ -6,21 +6,37 @@ import boto3
 import httpx
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_openai import ChatOpenAI
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 from pydantic import SecretStr
+
+from switchboard.investigation.deadline import require_time
 
 MODEL_ID = "deepseek.v3.2"
 HOST = "bedrock-mantle.us-east-1.api.aws"
 tracer = trace.get_tracer(__name__)
 
 
+class StreamingDeadline(BaseCallbackHandler):
+    """Stop streamed responses when the queued investigation runs out of time."""
+
+    raise_error = True
+
+    def on_llm_new_token(self, token, **kwargs):
+        require_time(seconds=0)
+
+
 class BedrockSigV4Auth(httpx.Auth):
     requires_request_body = True
 
     def __init__(self, session, model_id=MODEL_ID):
-        if model_id not in {"deepseek.v3.2", "openai.gpt-6-luna"}:
+        if model_id not in {
+            "deepseek.v3.2",
+            "openai.gpt-6-luna",
+            "minimax.minimax-m2.5",
+        }:
             raise ValueError("Unsupported Bedrock model")
         self.session = session
         self.model_id = model_id
@@ -77,6 +93,7 @@ def create_bedrock_model(model_id=None):
         profile_name=os.getenv("BEDROCK_PROFILE"), region_name="us-east-1"
     )
     auth = BedrockSigV4Auth(session, model_id)
+    use_streaming = model_id == "minimax.minimax-m2.5"
     return ChatOpenAI(
         model=model_id,
         base_url=f"https://{HOST}{auth.base_path}",
@@ -85,6 +102,11 @@ def create_bedrock_model(model_id=None):
         http_client=httpx.Client(auth=auth),
         http_async_client=httpx.AsyncClient(auth=auth),
         reasoning_effort="none" if model_id.startswith("openai.") else None,
+        # Use streamed, sequential tool calls for MiniMax.
+        streaming=use_streaming,
+        stream_usage=True,
+        model_kwargs={"parallel_tool_calls": False} if use_streaming else {},
+        callbacks=[StreamingDeadline()] if use_streaming else None,
         temperature=0,
         max_completion_tokens=8192,
         service_tier="default",

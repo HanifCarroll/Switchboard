@@ -21,6 +21,8 @@ Every endpoint change needs a request from an authorized customer contact and a 
 
 ## Approval and execution
 
+Preparing a proposal creates a draft for review and makes no configuration change. Independent approval and an open change window are not prerequisites for preparing this draft; they apply before execution.
+
 Sandbox changes do not require independent approval. Production changes require a different technical lead assigned to the customer and must occur within the registered change window.
 
 Approval covers the exact customer, integration, environment, current configuration, proposed endpoint, and recovery plan. Recheck permissions and configuration before execution. Changed instructions, configuration, or authority require review again. A conflicting request must be resolved before proceeding.

@@ -4,6 +4,7 @@
 
 import argparse
 import json
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -33,10 +34,13 @@ def main():
     parser.add_argument("--endpoint-url")
     arguments = parser.parse_args()
     session = boto3.Session(profile_name=arguments.profile, region_name="us-east-1")
+    boto3.setup_default_session(profile_name=arguments.profile, region_name="us-east-1")
+    if not arguments.endpoint_url:
+        os.environ["SWITCHBOARD_CONFIG_PARAMETER"] = "/switchboard/live/runtime"
     store = DynamoStore(
         arguments.table, session.client("dynamodb", endpoint_url=arguments.endpoint_url)
     )
-    storage = WorkspaceStorage("aws-check-" + str(uuid4()), transport=store)
+    storage = WorkspaceStorage(str(uuid4()), transport=store)
     checks = []
 
     # 1. Exercise the actual AWS transactions using the same business operations.
@@ -76,14 +80,15 @@ def main():
         and not second.was_created
     )
     checks.append("one execution receipt/version increment")
-    verification = verify_execution_delivery(
-        proposal_id=proposal["id"],
-        session=author,
-        verified_at=datetime.now(timezone.utc),
-    )
-    ticket = storage.get_ticket(ticket_id=proposal["ticket_id"])
-    assert verification.was_created and ticket and ticket["status"] == "closed"
-    checks.append("atomic verification and ticket outcome")
+    if not arguments.endpoint_url:
+        verification = verify_execution_delivery(
+            proposal_id=proposal["id"],
+            session=author,
+            verified_at=datetime.now(timezone.utc),
+        )
+        ticket = storage.get_ticket(ticket_id=proposal["ticket_id"])
+        assert verification.was_created and ticket and ticket["status"] == "closed"
+        checks.append("signed receiver delivery and atomic verification/ticket outcome")
     integration = storage.get_integration(integration_id=proposal["integration_id"])
     assert (
         integration

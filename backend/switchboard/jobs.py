@@ -176,18 +176,21 @@ def submit(
 
 
 def dispatch(*, storage: WorkspaceStorage, job: dict, sqs: Any = None):
+    from switchboard.workflow import start
+
     store = database(storage)
     try:
-        (sqs or queue_client()).send_message(
-            QueueUrl=os.environ["INVESTIGATION_QUEUE_URL"],
-            MessageBody=encode(
-                {
-                    "workspace_id": storage.workspace_id,
-                    "generation": job["generation"],
-                    "run_id": job["id"],
-                }
-            ),
-        )
+        if not start(storage, job["id"]):
+            (sqs or queue_client()).send_message(
+                QueueUrl=os.environ["INVESTIGATION_QUEUE_URL"],
+                MessageBody=encode(
+                    {
+                        "workspace_id": storage.workspace_id,
+                        "generation": job["generation"],
+                        "run_id": job["id"],
+                    }
+                ),
+            )
     except (BotoCoreError, ClientError):
         raise StorageError(
             f"Submission saved as {job['id']}; retry the same request to deliver it",
@@ -397,5 +400,9 @@ def process_message(message: dict, context: Any = None):
 
 
 def worker_handler(event: dict, context: Any):
+    from switchboard.workflow import complete_investigation
+
     for record in event["Records"]:
-        process_message(json.loads(record["body"]), context)
+        message = json.loads(record["body"])
+        process_message(message, context)
+        complete_investigation(message)

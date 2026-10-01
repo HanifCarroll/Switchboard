@@ -154,6 +154,56 @@ def test_global_allowance_is_atomic_across_visitors_and_rolls_over_at_utc_midnig
     assert submit_job(winner, sqs).run_id != winner_job.run_id
 
 
+def test_submission_window_limits_new_jobs_without_blocking_idempotent_retries(
+    queued, monkeypatch
+):
+    storage, sqs, _, _ = queued
+    monkeypatch.setenv("INVESTIGATION_WINDOW_LIMIT", "1")
+    key = uuid4()
+    job = submit_job(storage, sqs, key)
+    assert submit_job(storage, sqs, key).run_id == job.run_id
+    with pytest.raises(StorageError, match="few minutes") as denied:
+        submit_job(storage, sqs, ticket="CHG-1045")
+    assert denied.value.status == 429
+    future = datetime.now(timezone.utc) + timedelta(minutes=5)
+
+    class Later(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return future
+
+    monkeypatch.setattr("switchboard.jobs.datetime", Later)
+    assert submit_job(storage, sqs, ticket="CHG-1045").run_id != job.run_id
+
+
+def test_maintenance_removes_only_expired_submission_counters(queued):
+    storage, _, _, _ = queued
+    store = storage.transport
+    for period, expires in [
+        ("expired", time.time() - 60),
+        ("current", time.time() + 86400),
+    ]:
+        store.client.put_item(
+            TableName=store.table,
+            Item={
+                "PK": {"S": "USAGE"},
+                "SK": {"S": period},
+                "count": {"N": "1"},
+                "expires_at": {"N": str(int(expires))},
+            },
+        )
+    assert maintain()["deleted"] == 1
+    assert "Item" not in store.client.get_item(
+        TableName=store.table, Key={"PK": {"S": "USAGE"}, "SK": {"S": "expired"}}
+    )
+    assert (
+        store.client.get_item(
+            TableName=store.table, Key={"PK": {"S": "USAGE"}, "SK": {"S": "current"}}
+        )["Item"]["count"]["N"]
+        == "1"
+    )
+
+
 def test_save_before_send_failure_and_hourly_recovery(queued):
     storage, sqs, queue, _ = queued
 

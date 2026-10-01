@@ -48,7 +48,7 @@ Runtime roles are scoped to application resources. Function URLs require AWS IAM
 
 ## Inspect and recover jobs
 
-The public demo accepts up to 100 new investigations per UTC day globally and 10 per visitor workspace, controlled by the `DailyJobLimit` and `VisitorDailyJobLimit` stack parameters. Atomic counters commit with new job records. Idempotent resubmissions and SQS retries do not consume another allowance. Resetting a workspace does not reset its daily allowance. Exhaustion returns HTTP 429 without creating or queueing a job. Counter records expire through DynamoDB TTL; business records keep their existing maintenance rules. WAF also limits investigation submissions to 20 per IP in five minutes.
+The public demo accepts up to 100 new investigations per UTC day globally and 10 per visitor workspace, controlled by the `DailyJobLimit` and `VisitorDailyJobLimit` stack parameters. Atomic counters commit with new job records. Idempotent resubmissions and SQS retries do not consume another allowance. Resetting a workspace does not reset its daily allowance. Exhaustion returns HTTP 429 without creating or queueing a job. Counter records are removed after three days by the existing bounded hourly maintenance task; business records keep their existing cleanup rules. The application also limits new investigations to 20 globally per five-minute UTC window through `SubmissionWindowLimit`. Existing WAF protection applies to overall traffic.
 
 The worker processes one SQS message per invocation, with maximum concurrency two. Its timeout is 300 seconds; queue visibility is 1,800 seconds. Source retention is four days, dead-letter retention is 14 days, and five receives move a message to the DLQ. A hard failure can therefore have a substantial delay before retry.
 
@@ -82,7 +82,7 @@ Local development uses Amazon's official [DynamoDB Local](https://docs.aws.amazo
 
 ## Monitoring and alerts
 
-The regional Lambda quota must leave at least 100 executions unreserved. Once the quota supports it, `provision` enables stack-owned reservations: API 8, website 6, worker 5, receiver 2, and notifications 1. The SQS worker still processes only two messages concurrently. At a lower regional quota, provisioning omits reservations. Request increases through Service Quotas and rerun `provision` after approval. Reserved concurrency allocates and caps capacity; it does not keep instances running.
+The regional Lambda quota must leave at least 100 executions unreserved. Once the quota supports it, provisioning or the next application release enables stack-owned reservations: API 8, website 6, worker 5, receiver 2, and notifications 1. The SQS worker still processes only two messages concurrently. At a lower regional quota, reservations are omitted. Request increases through Service Quotas; a subsequent deployment activates the reservations after approval. Reserved concurrency allocates and caps capacity; it does not keep instances running.
 
 Open the `switchboard` CloudWatch dashboard in `us-east-1`. Ten standard alarms publish to the internal `switchboard-alarm-events` topic. A Lambda formats a clear subject, plain-language explanation, UTC timestamp, and investigation links, then publishes to `switchboard-alerts` for the existing email subscription. Raw metric payloads remain in CloudWatch:
 

@@ -47,13 +47,23 @@ def queue_client():
     return aws_client("sqs")
 
 
-def daily_allowances(store: DynamoStore, workspace_id: str) -> list[dict]:
+def submission_allowances(store: DynamoStore, workspace_id: str) -> list[dict]:
     """Charge a new job atomically with its records; retries cost no allowance."""
-    today = datetime.now(timezone.utc).date()
+    now = datetime.now(timezone.utc)
+    today = now.date()
     operations = []
-    for partition, setting in [
-        ("USAGE", "INVESTIGATION_DAILY_LIMIT"),
-        (f"USAGE#{workspace_id}", "INVESTIGATION_VISITOR_DAILY_LIMIT"),
+    for partition, setting, period in [
+        ("USAGE", "INVESTIGATION_DAILY_LIMIT", today.isoformat()),
+        (
+            f"USAGE#{workspace_id}",
+            "INVESTIGATION_VISITOR_DAILY_LIMIT",
+            today.isoformat(),
+        ),
+        (
+            "USAGE",
+            "INVESTIGATION_WINDOW_LIMIT",
+            f"WINDOW#{int(now.timestamp()) // 300}",
+        ),
     ]:
         limit = int(os.getenv(setting, "0"))
         if limit <= 0:
@@ -63,7 +73,7 @@ def daily_allowances(store: DynamoStore, workspace_id: str) -> list[dict]:
             {
                 "Update": {
                     "TableName": store.table,
-                    "Key": key(partition, today.isoformat()),
+                    "Key": key(partition, period),
                     "UpdateExpression": "SET expires_at = :expires ADD #count :one",
                     "ConditionExpression": "attribute_not_exists(#count) OR #count < :limit",
                     "ExpressionAttributeNames": {"#count": "count"},
@@ -97,6 +107,11 @@ def require_daily_capacity(store: DynamoStore, allowances: list[dict]):
         used = int(response.get("Item", {}).get("count", {}).get("N", "0"))
         limit = int(update["ExpressionAttributeValues"][":limit"]["N"])
         if used >= limit:
+            if update["Key"]["SK"]["S"].startswith("WINDOW#"):
+                raise StorageError(
+                    "Too many new investigations. Please try again in a few minutes.",
+                    status=429,
+                )
             raise StorageError(
                 "The demo's daily investigation limit has been reached. Try again tomorrow (UTC).",
                 status=429,
@@ -160,7 +175,7 @@ def submit(
     existing_id = pointer["id"] if pointer else store.get(partition, active_key)
     job = store.get(partition, f"JOB#{existing_id}") if existing_id else None
     if job is None:
-        allowances = daily_allowances(store, storage.workspace_id)
+        allowances = submission_allowances(store, storage.workspace_id)
         identifier = str(uuid4())
         job = {
             "id": identifier,

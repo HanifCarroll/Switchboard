@@ -73,6 +73,21 @@ def maintain(context=None):
         for item in response["Items"]:
             partition = item["PK"]["S"]
             sort = item["SK"]["S"]
+            if partition == "USAGE" or partition.startswith("USAGE#"):
+                if int(item["expires_at"]["N"]) < time.time():
+                    try:
+                        store.client.delete_item(
+                            TableName=store.table,
+                            Key=key(partition, sort),
+                            ConditionExpression="expires_at < :now",
+                            ExpressionAttributeValues={
+                                ":now": {"N": str(int(time.time()))}
+                            },
+                        )
+                        counts["deleted"] += 1
+                    except store.client.exceptions.ConditionalCheckFailedException:
+                        pass
+                continue
             if not partition.startswith("WS#"):
                 continue
             workspace, separator, generation = partition[3:].partition("#GEN#")

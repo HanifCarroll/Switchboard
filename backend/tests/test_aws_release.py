@@ -94,6 +94,9 @@ def test_website_release_preserves_other_components_and_configuration(
     health = Mock(side_effect=RuntimeError("API unavailable") if health_fails else None)
     monkeypatch.setattr(aws, "smoke_check", health)
     functions.get_alias.return_value = {"FunctionVersion": "15"}
+    functions.get_account_settings.return_value = {
+        "AccountLimit": {"ConcurrentExecutions": 10}
+    }
     functions.publish_version.return_value = {"Version": "16"}
     if publication_fails:
         functions.publish_version.side_effect = RuntimeError("Publication failed")

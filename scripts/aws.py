@@ -349,6 +349,11 @@ def release(session, component, mode="live", model_provider=None, bedrock_model=
         else ["receiver", "worker", "api", "website"]
     )
     client = session.client("lambda")
+    if (
+        settings.get("ReserveConcurrency", "disabled") == "disabled"
+        and client.get_account_settings()["AccountLimit"]["ConcurrentExecutions"] >= 122
+    ):
+        update_stack(session, {"ReserveConcurrency": "enabled"})
     LOCAL.mkdir(parents=True, exist_ok=True)
     receipt_path = LOCAL / "previous-aliases.json"
     previous = json.loads(receipt_path.read_text()) if receipt_path.exists() else {}

@@ -32,11 +32,7 @@
           "ReadCapacityUnits": 25,
           "WriteCapacityUnits": 25
         },
-        "DeletionProtectionEnabled": true,
-        "TimeToLiveSpecification": {
-          "AttributeName": "expires_at",
-          "Enabled": true
-        }
+        "DeletionProtectionEnabled": true
       },
       "DeletionPolicy": "Retain",
       "UpdateReplacePolicy": "Retain"
@@ -287,6 +283,9 @@
                 },
                 "INVESTIGATION_VISITOR_DAILY_LIMIT": {
                   "Ref": "VisitorDailyJobLimit"
+                },
+                "INVESTIGATION_WINDOW_LIMIT": {
+                  "Ref": "SubmissionWindowLimit"
                 }
               }
             },
@@ -944,6 +943,11 @@
                       "iam:PassedToService": "lambda.amazonaws.com"
                     }
                   }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "lambda:GetAccountSettings",
+                  "Resource": "*"
                 }
               ]
             }
@@ -1390,61 +1394,6 @@
               "SampledRequestsEnabled": false,
               "CloudWatchMetricsEnabled": false,
               "MetricName": "switchboard-api-limit"
-            }
-          },
-          {
-            "Name": "LimitInvestigationSubmissions",
-            "Priority": 1,
-            "Statement": {
-              "RateBasedStatement": {
-                "Limit": 20,
-                "EvaluationWindowSec": 300,
-                "AggregateKeyType": "IP",
-                "ScopeDownStatement": {
-                  "AndStatement": {
-                    "Statements": [
-                      {
-                        "ByteMatchStatement": {
-                          "SearchString": "/api/investigations",
-                          "FieldToMatch": {
-                            "UriPath": {}
-                          },
-                          "PositionalConstraint": "EXACTLY",
-                          "TextTransformations": [
-                            {
-                              "Priority": 0,
-                              "Type": "NONE"
-                            }
-                          ]
-                        }
-                      },
-                      {
-                        "ByteMatchStatement": {
-                          "SearchString": "POST",
-                          "FieldToMatch": {
-                            "Method": {}
-                          },
-                          "PositionalConstraint": "EXACTLY",
-                          "TextTransformations": [
-                            {
-                              "Priority": 0,
-                              "Type": "NONE"
-                            }
-                          ]
-                        }
-                      }
-                    ]
-                  }
-                }
-              }
-            },
-            "Action": {
-              "Block": {}
-            },
-            "VisibilityConfig": {
-              "SampledRequestsEnabled": false,
-              "CloudWatchMetricsEnabled": false,
-              "MetricName": "switchboard-job-limit"
             }
           }
         ],
@@ -2721,6 +2670,13 @@
         "disabled"
       ],
       "Description": "Enable function reservations after raising the Lambda quota."
+    },
+    "SubmissionWindowLimit": {
+      "Type": "Number",
+      "Default": 20,
+      "MinValue": 1,
+      "MaxValue": 1000,
+      "Description": "Maximum new demo investigations per five-minute UTC window."
     }
   },
   "Conditions": {

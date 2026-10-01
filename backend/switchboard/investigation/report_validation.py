@@ -1,6 +1,7 @@
 """Validate investigation wording against the policies used by the workspace."""
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -19,6 +20,9 @@ from switchboard.models import (
     ReportValidation,
     Text,
 )
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 PolicyIssueKind = Literal[
     "missing_required_condition",
@@ -99,6 +103,15 @@ def validate_investigation_report(
         )
 
     # 2. Revise only the narrative findings, preserving the trusted outcome and facts.
+    logger.info(
+        "Investigation report requires revision",
+        extra={
+            "ticket_id": draft.ticket_id,
+            "stage": "report_revision",
+            "rejected_report": draft.model_dump(mode="json"),
+            "policy_review": first_review.model_dump(mode="json"),
+        },
+    )
     revised_findings = _revise_findings(
         draft=draft,
         review=first_review,

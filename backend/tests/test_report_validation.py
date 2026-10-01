@@ -100,7 +100,7 @@ def test_policy_review_keeps_reasoning_without_json_response_mode():
     )
 
 
-def test_policy_issue_is_revised_once_and_rechecked():
+def test_policy_issue_is_revised_once_and_rechecked(caplog):
     revised_findings = {
         "overview": "The request is blocked because the destination is not registered.",
         "decision_criteria": [],
@@ -123,6 +123,14 @@ def test_policy_issue_is_revised_once_and_rechecked():
     assert validated.investigation.findings.overview == revised_findings["overview"]
     assert validated.validation.evaluation_count == 2
     assert validated.validation.revision_count == 1
+    revision_log = next(
+        record
+        for record in caplog.records
+        if record.message == "Investigation report requires revision"
+    )
+    assert revision_log.ticket_id == "CHG-1042"
+    assert revision_log.rejected_report == draft_report().model_dump(mode="json")
+    assert revision_log.policy_review == json.loads(issue_response())
 
 
 def test_report_is_rejected_when_revision_still_has_policy_issues():

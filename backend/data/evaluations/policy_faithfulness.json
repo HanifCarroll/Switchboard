@@ -423,5 +423,154 @@
     "expect_issue": false,
     "expected_issue_kinds": [],
     "expected_policy_ids": []
+  },
+  {
+    "id": "proposal-evidence-blocker",
+    "investigation_output": "The support investigator could not retrieve the customer registry or current configuration. Proposal preparation is blocked until an authorized employee retrieves and verifies the requester, destination registration, and current configuration.",
+    "expect_issue": false,
+    "expected_issue_kinds": [],
+    "expected_policy_ids": []
+  },
+  {
+    "id": "proposal-evidence-waived",
+    "investigation_output": "Prepare a proposal even though the customer registry and current configuration are unavailable; verify the requester and destination registration only before execution.",
+    "expect_issue": true,
+    "expected_issue_kinds": [
+      "missing_required_condition"
+    ],
+    "expected_policy_ids": [
+      "endpoint-change-v2"
+    ]
+  },
+  {
+    "id": "uncertain-result-manual-investigation",
+    "investigation_output": "An uncertain delivery result stays open for manual investigation. Do not report completion or repeat the action until what happened is established.",
+    "expect_issue": false,
+    "expected_issue_kinds": [],
+    "expected_policy_ids": []
+  },
+  {
+    "id": "missing-record-identifiers",
+    "investigation_output": "The requested integration record could not be retrieved, and the customer registry is unavailable. Provide the ticket and customer identifiers so an authorized employee can retrieve the request, registry, and configuration and verify the required evidence.",
+    "expect_issue": false,
+    "expected_issue_kinds": [],
+    "expected_policy_ids": []
+  },
+  {
+    "id": "mandatory-extra-ticket",
+    "investigation_output": "Even when the authorized customer contact, registered destination, current configuration, and employee authority are verified from existing records, a proposal must not be prepared until a separate formal support ticket is created.",
+    "expect_issue": true,
+    "expected_issue_kinds": [
+      "invented_requirement"
+    ],
+    "expected_policy_ids": [
+      "endpoint-change-v2"
+    ]
+  },
+  {
+    "id": "full-missing-record-report",
+    "investigation_output": {
+      "ticket_id": null,
+      "proposed_endpoint": null,
+      "evidence_ids": [
+        "endpoint-change-v1",
+        "endpoint-change-v2"
+      ],
+      "findings": {
+        "overview": "A proposal for int-globex-prod cannot be prepared: the integration configuration record could not be retrieved, and no ticket or customer registry was provided or obtained, so the current and proposed endpoints and the authorized requester remain unknown. No change was made by this investigation.",
+        "decision_criteria": [
+          {
+            "name": "Governing endpoint policy",
+            "status": "verified",
+            "required_before": "proposal",
+            "explanation": "endpoint-change-v2 is approved and effective 2026-09-01; it supersedes endpoint-change-v1, which is archived. Version 1 allowed self-approval, but v2 removes that, so v1's self-approval rule no longer applies and v2 governs.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "endpoint-change-v1",
+              "endpoint-change-v2"
+            ]
+          },
+          {
+            "name": "Integration configuration for int-globex-prod",
+            "status": "unavailable",
+            "required_before": "proposal",
+            "explanation": "The configuration record could not be retrieved; it may not exist or access may be denied. Without it, the current endpoint cannot be established or compared to a proposed endpoint.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": []
+          },
+          {
+            "name": "Authorized customer contact (requester)",
+            "status": "unverified",
+            "required_before": "proposal",
+            "explanation": "A stated identity in the request cannot replace the application-supplied identity. No ticket or registry record was available to confirm an authorized contact, so authorization is unestablished rather than disproven.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": []
+          },
+          {
+            "name": "Registered destination",
+            "status": "unavailable",
+            "required_before": "proposal",
+            "explanation": "No customer registry record was retrieved, so registration of the destination for the correct customer and environment cannot be confirmed.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": []
+          },
+          {
+            "name": "Support ticket and proposed endpoint",
+            "status": "unavailable",
+            "required_before": "proposal",
+            "explanation": "No ticket ID was supplied or retrieved, so the requested change and its exact target endpoint cannot be established from evidence.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": []
+          },
+          {
+            "name": "Independent approval",
+            "status": "deferred",
+            "required_before": "execution",
+            "explanation": "Production changes require a different technical lead assigned to the customer; the preparing engineer may not self-approve. This applies before execution, not before preparing a draft.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "endpoint-change-v2"
+            ]
+          },
+          {
+            "name": "Open change window",
+            "status": "deferred",
+            "required_before": "execution",
+            "explanation": "Production changes must occur within the registered change window; recheck authority and configuration at execution time.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "endpoint-change-v2"
+            ]
+          },
+          {
+            "name": "Delivery verification",
+            "status": "deferred",
+            "required_before": "verification",
+            "explanation": "After execution, confirm the approved endpoint is active and a synthetic test event reached the intended destination; a configuration update alone is not proof.",
+            "policy_id": "endpoint-change-v2",
+            "evidence_ids": [
+              "endpoint-change-v2"
+            ]
+          }
+        ],
+        "recommendation": "Do not prepare a proposal yet. The evidence supports only a blocked finding: an authorized employee must retrieve and verify the int-globex-prod configuration and the relevant ticket and customer registry records, confirming the authorized contact and registered destination, before a proposal can be drafted for review."
+      },
+      "blockers": [
+        {
+          "kind": "missing_evidence",
+          "summary": "The integration configuration for int-globex-prod could not be retrieved, so the current endpoint and proposed change cannot be verified.",
+          "resolution": "Have an authorized employee retrieve and verify the current configuration for int-globex-prod; the record may not exist or access may be denied."
+        },
+        {
+          "kind": "missing_evidence",
+          "summary": "No support ticket or customer registry record was available, so the authorized requester and the registered destination for the correct customer and environment could not be verified.",
+          "resolution": "Provide or retrieve the exact ticket ID and customer registry record, then confirm the authorized contact and destination registration for the intended environment."
+        }
+      ],
+      "outcome": "blocked"
+    },
+    "expect_issue": false,
+    "expected_issue_kinds": [],
+    "expected_policy_ids": []
   }
 ]

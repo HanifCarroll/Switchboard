@@ -19,7 +19,10 @@ from switchboard.investigation.agent import create_model
 from switchboard.investigation.evidence import read_investigation_evidence
 from switchboard.investigation.fixtures import investigate_ticket_fixture
 from switchboard.investigation.mode import get_investigation_mode
-from switchboard.investigation.report_validation import ReportValidationError
+from switchboard.investigation.report_validation import (
+    EmptyModelResponseError,
+    ReportValidationError,
+)
 from switchboard.investigation.runner import investigate_ticket
 from switchboard.investigation.runs import (
     InvestigationRun,
@@ -165,7 +168,7 @@ def start_investigation(
                 storage=request_context.storage,
                 now=datetime.now(timezone.utc),
             )
-    except ReportValidationError as error:
+    except (ReportValidationError, EmptyModelResponseError) as error:
         logger.exception(
             "Investigation report validation failed",
             extra={

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import BaseMessage
 from opentelemetry import trace
 from pydantic import Field, ValidationError
 
@@ -62,6 +63,27 @@ class ReportValidationError(ValueError):
     def __init__(self, message: str, *, diagnostics: dict | None = None):
         super().__init__(message)
         self.diagnostics = diagnostics or {}
+
+
+class EmptyModelResponseError(RuntimeError):
+    """A missing model response can be retried without accepting any report."""
+
+    def __init__(self, *, diagnostics: dict):
+        super().__init__("Model returned an empty response; awaiting SQS retry")
+        self.diagnostics = diagnostics
+
+
+def _response_diagnostics(response: BaseMessage, details: dict) -> dict:
+    diagnostics = {
+        **details,
+        "rejected_output": response.text,
+        "response_finish_reason": response.response_metadata.get("finish_reason"),
+        "response_token_usage": response.response_metadata.get("token_usage"),
+    }
+    if not response.text.strip():
+        raise EmptyModelResponseError(diagnostics=diagnostics)
+
+    return diagnostics
 
 
 @dataclass(frozen=True)
@@ -179,19 +201,17 @@ def evaluate_policy_claims(
         ],
         config={"run_name": "policy-faithfulness-review"},
     )
+    diagnostics = _response_diagnostics(
+        response,
+        {"stage": "policy_review", "rejected_report": investigation_output},
+    )
     try:
         review = PolicyReview.model_validate_json(response.text)
     except ValidationError as error:
         raise ReportValidationError(
             "Policy review returned invalid output",
             diagnostics={
-                "stage": "policy_review",
-                "rejected_report": investigation_output,
-                "rejected_output": response.text,
-                "response_finish_reason": response.response_metadata.get(
-                    "finish_reason"
-                ),
-                "response_token_usage": response.response_metadata.get("token_usage"),
+                **diagnostics,
                 "validation_errors": json.loads(error.json(include_url=False)),
             },
         ) from error
@@ -247,20 +267,21 @@ def _revise_findings(
         ],
         config={"run_name": "policy-faithfulness-revision"},
     )
+    diagnostics = _response_diagnostics(
+        response,
+        {
+            "stage": "report_revision",
+            "rejected_report": draft.model_dump(mode="json"),
+            "policy_review": review.model_dump(mode="json"),
+        },
+    )
     try:
         return InvestigationFindings.model_validate_json(response.text)
     except ValidationError as error:
         raise ReportValidationError(
             "Policy revision returned invalid output",
             diagnostics={
-                "stage": "report_revision",
-                "rejected_report": draft.model_dump(mode="json"),
-                "policy_review": review.model_dump(mode="json"),
-                "rejected_output": response.text,
-                "response_finish_reason": response.response_metadata.get(
-                    "finish_reason"
-                ),
-                "response_token_usage": response.response_metadata.get("token_usage"),
+                **diagnostics,
                 "validation_errors": json.loads(error.json(include_url=False)),
             },
         ) from error

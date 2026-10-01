@@ -20,10 +20,6 @@ from dotenv import dotenv_values
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / ".aws-build"
 LOCAL = ROOT / "aws" / "local"
-LAYER = "arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerX86:30"
-TRACE_LAYER = (
-    "arn:aws:lambda:us-east-1:901920570463:layer:aws-otel-python-amd64-ver-1-32-0:7"
-)
 TRACE_LAYER_BYTES = 59807429
 
 
@@ -248,12 +244,13 @@ def provision(session, alert_email=None):
     arguments = {
         "StackName": "switchboard",
         "TemplateBody": json.dumps(
-            json.loads((ROOT / "aws" / "template.json").read_text())
+            json.loads((ROOT / "aws" / "template.json").read_text()),
+            separators=(",", ":"),
         ),
         "Capabilities": ["CAPABILITY_NAMED_IAM"],
     }
     try:
-        existing = client.describe_stacks(StackName="switchboard")["Stacks"][0]
+        client.describe_stacks(StackName="switchboard")
     except client.exceptions.ClientError as error:
         if "does not exist" not in str(error):
             raise
@@ -264,23 +261,9 @@ def provision(session, alert_email=None):
         client.create_stack(**arguments)
         waiter = "stack_create_complete"
     else:
-        arguments["Parameters"] = [
-            {"ParameterKey": item["ParameterKey"], "UsePreviousValue": True}
-            for item in existing.get("Parameters", [])
-        ]
-        if alert_email is not None:
-            arguments["Parameters"] = [
-                item
-                for item in arguments["Parameters"]
-                if item["ParameterKey"] != "AlertEmail"
-            ] + [{"ParameterKey": "AlertEmail", "ParameterValue": alert_email}]
-        try:
-            client.update_stack(**arguments)
-        except ClientError as error:
-            if "No updates" in str(error):
-                return
-            raise
-        waiter = "stack_update_complete"
+        changes = {"AlertEmail": alert_email} if alert_email is not None else {}
+        update_stack(session, changes, template=arguments["TemplateBody"])
+        return
     print(
         "Provisioning fixed-capacity storage, queues, Lambda functions, and execution roles.",
         flush=True,
@@ -299,97 +282,47 @@ def outputs(session):
 
 
 def release(session, component, mode="live", model_provider=None, bedrock_model=None):
-    # 1. Resolve runtime settings and preserve rollback information before changes.
-    values = outputs(session)
-    client = session.client("lambda")
-    LOCAL.mkdir(parents=True, exist_ok=True)
-    receipt_path = LOCAL / "previous-aliases.json"
-    previous = json.loads(receipt_path.read_text()) if receipt_path.exists() else {}
-    common = {
-        "DYNAMODB_TABLE": values["Database"],
-        "SWITCHBOARD_AUTH_MODE": "demo",
-        "SWITCHBOARD_RUNTIME": "aws",
-        "SWITCHBOARD_INVESTIGATION_MODE": mode,
-        "LANGCHAIN_TRACING_V2": "false",
-        "LANGSMITH_TRACING": "false",
-    }
+    # 1. Preserve live versions before uploading code or changing configuration.
     if mode != "live":
         raise ValueError("Hosted fixture execution is disabled")
-    # 2. Publish immutable versions; each component keeps its own live alias.
-    for name in (
+    stack = session.client("cloudformation").describe_stacks(StackName="switchboard")[
+        "Stacks"
+    ][0]
+    settings = {
+        item["ParameterKey"]: item["ParameterValue"] for item in stack["Parameters"]
+    }
+    if settings.get("RuntimeReady", "bootstrap") != "live" and component != "all":
+        raise ValueError("The first application release must include all components")
+    if (model_provider or bedrock_model) and component == "website":
+        raise ValueError("Model selection requires a backend release")
+    names = (
         ["receiver", "worker", "api"]
         if component == "backend"
         else ["website"]
         if component == "website"
         else ["receiver", "worker", "api", "website"]
-    ):
+    )
+    client = session.client("lambda")
+    LOCAL.mkdir(parents=True, exist_ok=True)
+    receipt_path = LOCAL / "previous-aliases.json"
+    previous = json.loads(receipt_path.read_text()) if receipt_path.exists() else {}
+    for name in names:
+        previous[name] = client.get_alias(
+            FunctionName=f"switchboard-{name}", Name="live"
+        )["FunctionVersion"]
+    receipt_path.write_text(json.dumps(previous, indent=2) + "\n")
+    if "worker" in names:
+        (LOCAL / "previous-runtime.json").write_text(
+            json.dumps(
+                {key: settings[key] for key in ("ModelProvider", "BedrockModel")},
+                indent=2,
+            )
+            + "\n"
+        )
+
+    # 2. Upload each ZIP while live aliases continue serving immutable versions.
+    for name in names:
         function = f"switchboard-{name}"
-        try:
-            previous[name] = client.get_alias(FunctionName=function, Name="live")[
-                "FunctionVersion"
-            ]
-        except client.exceptions.ResourceNotFoundException:
-            previous.pop(name, None)
-        receipt_path.write_text(json.dumps(previous, indent=2) + "\n")
-        env = dict(common)
-        env.update(
-            AWS_LAMBDA_EXEC_WRAPPER="/opt/otel-instrument",
-            OTEL_SERVICE_NAME=function,
-            OTEL_METRICS_EXPORTER="none",
-            OTEL_LOGS_EXPORTER="none",
-            OTEL_PYTHON_DISABLED_INSTRUMENTATIONS="fastapi,httpx,requests,urllib,urllib3",
-        )
-        if name in {"api", "worker"}:
-            env["SWITCHBOARD_CONFIG_PARAMETER"] = values["RuntimeParameter"]
-        env["INVESTIGATION_QUEUE_URL"] = values["Investigations"]
-        if name == "api":
-            env["INVESTIGATION_DLQ_URL"] = values["DeadLetters"]
-        if name == "worker":
-            try:
-                current_configuration = client.get_function_configuration(
-                    FunctionName=function, Qualifier="live"
-                )
-            except client.exceptions.ResourceNotFoundException:
-                current_configuration = client.get_function_configuration(
-                    FunctionName=function
-                )
-            current_env = current_configuration.get("Environment", {}).get(
-                "Variables", {}
-            )
-            provider = model_provider or current_env.get(
-                "SWITCHBOARD_MODEL_PROVIDER", "deepseek"
-            )
-            env["SWITCHBOARD_MODEL_PROVIDER"] = provider
-            if provider == "bedrock":
-                env["SWITCHBOARD_BEDROCK_MODEL"] = bedrock_model or current_env.get(
-                    "SWITCHBOARD_BEDROCK_MODEL", "deepseek.v3.2"
-                )
-            if provider == "deepseek":
-                env["DEEPSEEK_KEY_PARAMETER"] = values["ModelKeyParameter"]
-        if name == "website":
-            env = {
-                "AWS_LAMBDA_EXEC_WRAPPER": "/opt/bootstrap",
-                "AWS_LWA_PORT": "8080",
-                "AWS_LWA_READINESS_CHECK_PATH": "/work",
-                "AWS_LWA_READINESS_CHECK_HEALTHY_STATUS": "200-399",
-                "AWS_LWA_ENABLE_COMPRESSION": "true",
-                "AWS_LWA_INVOKE_MODE": "buffered",
-                "NEXT_PUBLIC_AUTH_MODE": "demo",
-            }
-        client.update_function_configuration(
-            FunctionName=function,
-            Handler="run.sh"
-            if name == "website"
-            else "switchboard.jobs.worker_handler"
-            if name == "worker"
-            else "switchboard.receiver.handler"
-            if name == "receiver"
-            else "switchboard.lambda_handler.handler",
-            Environment={"Variables": env},
-            Layers=[LAYER] if name == "website" else [TRACE_LAYER],
-            TracingConfig={"Mode": "Active"},
-        )
-        client.get_waiter("function_updated_v2").wait(FunctionName=function)
         client.update_function_code(
             FunctionName=function,
             ZipFile=(
@@ -397,18 +330,22 @@ def release(session, component, mode="live", model_provider=None, bedrock_model=
             ).read_bytes(),
         )
         client.get_waiter("function_updated_v2").wait(FunctionName=function)
-        version = client.publish_version(FunctionName=function)["Version"]
-        if name == "receiver":
-            promote_receiver(session, version)
-        elif name in previous:
-            client.update_alias(
-                FunctionName=function, Name="live", FunctionVersion=version
-            )
-        else:
-            client.create_alias(
-                FunctionName=function, Name="live", FunctionVersion=version
-            )
+
+    # 3. Apply CloudFormation runtime settings before publishing new versions.
+    changes = {"RuntimeReady": "live"}
+    if model_provider:
+        changes["ModelProvider"] = model_provider
+    if bedrock_model:
+        changes["BedrockModel"] = bedrock_model
+    update_stack(session, changes)
+    versions = {}
+    for name in names:
+        version = client.publish_version(FunctionName=f"switchboard-{name}")["Version"]
+        versions[("API" if name == "api" else name.title()) + "Version"] = version
         print(f"Published {name} version {version}.", flush=True)
+
+    # 4. Promote the selected components through one CloudFormation update.
+    update_stack(session, versions)
 
 
 def provision_model_key(session):
@@ -446,22 +383,34 @@ def provision_model_key(session):
     print("Encrypted model credential stored in Parameter Store.")
 
 
-def promote_receiver(session, version):
-    """Change the CloudFormation-owned alias without changing infrastructure."""
+def update_stack(session, changes=None, template=None):
+    """Preserve unrelated stack parameters for configuration, release, and rollback."""
     client = session.client("cloudformation")
     stack = client.describe_stacks(StackName="switchboard")["Stacks"][0]
+    changes = changes or {}
     parameters = [
         {"ParameterKey": item["ParameterKey"], "UsePreviousValue": True}
         for item in stack.get("Parameters", [])
-        if item["ParameterKey"] != "ReceiverVersion"
+        if item["ParameterKey"] not in changes
     ]
-    parameters.append({"ParameterKey": "ReceiverVersion", "ParameterValue": version})
-    client.update_stack(
-        StackName="switchboard",
-        UsePreviousTemplate=True,
-        Parameters=parameters,
-        Capabilities=["CAPABILITY_NAMED_IAM"],
+    parameters.extend(
+        {"ParameterKey": key, "ParameterValue": value} for key, value in changes.items()
     )
+    arguments = {
+        "StackName": "switchboard",
+        "Parameters": parameters,
+        "Capabilities": ["CAPABILITY_NAMED_IAM"],
+    }
+    if template is None:
+        arguments["UsePreviousTemplate"] = True
+    else:
+        arguments["TemplateBody"] = template
+    try:
+        client.update_stack(**arguments)
+    except ClientError as error:
+        if "No updates" in str(error):
+            return
+        raise
     client.get_waiter("stack_update_complete").wait(
         StackName="switchboard", WaiterConfig={"Delay": 5, "MaxAttempts": 120}
     )
@@ -553,18 +502,18 @@ def main():
             if arguments.component == "website"
             else set(previous)
         )
+        changes = {
+            ("API" if name == "api" else name.title()) + "Version": version
+            for name, version in previous.items()
+            if name in names
+        }
+        runtime_path = LOCAL / "previous-runtime.json"
+        if "worker" in names and runtime_path.exists():
+            changes.update(json.loads(runtime_path.read_text()))
+        update_stack(session, changes)
         for name, version in previous.items():
-            if name not in names:
-                continue
-            if name == "receiver":
-                promote_receiver(session, version)
-            else:
-                session.client("lambda").update_alias(
-                    FunctionName=f"switchboard-{name}",
-                    Name="live",
-                    FunctionVersion=version,
-                )
-            print(f"Restored {name} version {version}.")
+            if name in names:
+                print(f"Restored {name} version {version}.")
 
 
 if __name__ == "__main__":

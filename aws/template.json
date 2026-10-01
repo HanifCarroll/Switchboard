@@ -216,7 +216,13 @@
           ]
         },
         "Runtime": "python3.12",
-        "Handler": "index.handler",
+        "Handler": {
+          "Fn::If": [
+            "LiveRuntime",
+            "switchboard.lambda_handler.handler",
+            "index.handler"
+          ]
+        },
         "Timeout": 120,
         "MemorySize": 512,
         "Architectures": [
@@ -234,6 +240,49 @@
         },
         "TracingConfig": {
           "Mode": "Active"
+        },
+        "Layers": {
+          "Fn::If": [
+            "LiveRuntime",
+            [
+              "arn:aws:lambda:us-east-1:901920570463:layer:aws-otel-python-amd64-ver-1-32-0:7"
+            ],
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        },
+        "Environment": {
+          "Fn::If": [
+            "LiveRuntime",
+            {
+              "Variables": {
+                "DYNAMODB_TABLE": {
+                  "Ref": "Database"
+                },
+                "SWITCHBOARD_AUTH_MODE": "demo",
+                "SWITCHBOARD_RUNTIME": "aws",
+                "SWITCHBOARD_INVESTIGATION_MODE": "live",
+                "LANGCHAIN_TRACING_V2": "false",
+                "LANGSMITH_TRACING": "false",
+                "AWS_LAMBDA_EXEC_WRAPPER": "/opt/otel-instrument",
+                "OTEL_SERVICE_NAME": "switchboard-api",
+                "OTEL_METRICS_EXPORTER": "none",
+                "OTEL_LOGS_EXPORTER": "none",
+                "OTEL_PYTHON_DISABLED_INSTRUMENTATIONS": "fastapi,httpx,requests,urllib,urllib3",
+                "INVESTIGATION_QUEUE_URL": {
+                  "Ref": "Investigations"
+                },
+                "SWITCHBOARD_CONFIG_PARAMETER": "/switchboard/live/runtime",
+                "INVESTIGATION_DLQ_URL": {
+                  "Ref": "DeadLetters"
+                }
+              }
+            },
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
         }
       }
     },
@@ -385,7 +434,13 @@
           ]
         },
         "Runtime": "python3.12",
-        "Handler": "index.handler",
+        "Handler": {
+          "Fn::If": [
+            "LiveRuntime",
+            "switchboard.jobs.worker_handler",
+            "index.handler"
+          ]
+        },
         "Timeout": 300,
         "MemorySize": 1024,
         "Architectures": [
@@ -403,6 +458,69 @@
         },
         "TracingConfig": {
           "Mode": "Active"
+        },
+        "Layers": {
+          "Fn::If": [
+            "LiveRuntime",
+            [
+              "arn:aws:lambda:us-east-1:901920570463:layer:aws-otel-python-amd64-ver-1-32-0:7"
+            ],
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        },
+        "Environment": {
+          "Fn::If": [
+            "LiveRuntime",
+            {
+              "Variables": {
+                "DYNAMODB_TABLE": {
+                  "Ref": "Database"
+                },
+                "SWITCHBOARD_AUTH_MODE": "demo",
+                "SWITCHBOARD_RUNTIME": "aws",
+                "SWITCHBOARD_INVESTIGATION_MODE": "live",
+                "LANGCHAIN_TRACING_V2": "false",
+                "LANGSMITH_TRACING": "false",
+                "AWS_LAMBDA_EXEC_WRAPPER": "/opt/otel-instrument",
+                "OTEL_SERVICE_NAME": "switchboard-worker",
+                "OTEL_METRICS_EXPORTER": "none",
+                "OTEL_LOGS_EXPORTER": "none",
+                "OTEL_PYTHON_DISABLED_INSTRUMENTATIONS": "fastapi,httpx,requests,urllib,urllib3",
+                "INVESTIGATION_QUEUE_URL": {
+                  "Ref": "Investigations"
+                },
+                "SWITCHBOARD_CONFIG_PARAMETER": "/switchboard/live/runtime",
+                "SWITCHBOARD_MODEL_PROVIDER": {
+                  "Ref": "ModelProvider"
+                },
+                "SWITCHBOARD_BEDROCK_MODEL": {
+                  "Fn::If": [
+                    "BedrockModelEnabled",
+                    {
+                      "Ref": "BedrockModel"
+                    },
+                    {
+                      "Ref": "AWS::NoValue"
+                    }
+                  ]
+                },
+                "DEEPSEEK_KEY_PARAMETER": {
+                  "Fn::If": [
+                    "DirectModel",
+                    "/switchboard/live/deepseek-api-key",
+                    {
+                      "Ref": "AWS::NoValue"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
         }
       }
     },
@@ -470,7 +588,13 @@
           ]
         },
         "Runtime": "nodejs24.x",
-        "Handler": "index.handler",
+        "Handler": {
+          "Fn::If": [
+            "LiveRuntime",
+            "run.sh",
+            "index.handler"
+          ]
+        },
         "Timeout": 30,
         "MemorySize": 512,
         "Architectures": [
@@ -487,6 +611,36 @@
         },
         "TracingConfig": {
           "Mode": "Active"
+        },
+        "Layers": {
+          "Fn::If": [
+            "LiveRuntime",
+            [
+              "arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerX86:30"
+            ],
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        },
+        "Environment": {
+          "Fn::If": [
+            "LiveRuntime",
+            {
+              "Variables": {
+                "AWS_LAMBDA_EXEC_WRAPPER": "/opt/bootstrap",
+                "AWS_LWA_PORT": "8080",
+                "AWS_LWA_READINESS_CHECK_PATH": "/work",
+                "AWS_LWA_READINESS_CHECK_HEALTHY_STATUS": "200-399",
+                "AWS_LWA_ENABLE_COMPRESSION": "true",
+                "AWS_LWA_INVOKE_MODE": "buffered",
+                "NEXT_PUBLIC_AUTH_MODE": "demo"
+              }
+            },
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
         }
       }
     },
@@ -703,8 +857,54 @@
                 {
                   "Effect": "Allow",
                   "Action": "lambda:ListAliases",
-                  "Resource": {
-                    "Fn::Sub": "${Receiver.Arn}"
+                  "Resource": [
+                    {
+                      "Fn::Sub": "${API.Arn}"
+                    },
+                    {
+                      "Fn::Sub": "${Worker.Arn}"
+                    },
+                    {
+                      "Fn::Sub": "${Website.Arn}"
+                    },
+                    {
+                      "Fn::Sub": "${Receiver.Arn}"
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "iam:PassRole",
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "APIRole",
+                        "Arn"
+                      ]
+                    },
+                    {
+                      "Fn::GetAtt": [
+                        "WorkerRole",
+                        "Arn"
+                      ]
+                    },
+                    {
+                      "Fn::GetAtt": [
+                        "WebsiteRole",
+                        "Arn"
+                      ]
+                    },
+                    {
+                      "Fn::GetAtt": [
+                        "ReceiverRole",
+                        "Arn"
+                      ]
+                    }
+                  ],
+                  "Condition": {
+                    "StringEquals": {
+                      "iam:PassedToService": "lambda.amazonaws.com"
+                    }
                   }
                 }
               ]
@@ -965,7 +1165,8 @@
         "Qualifier": "live",
         "AuthType": "AWS_IAM",
         "InvokeMode": "BUFFERED"
-      }
+      },
+      "DependsOn": "APIAlias"
     },
     "APIUrlPermission": {
       "Type": "AWS::Lambda::Permission",
@@ -981,7 +1182,8 @@
           "Fn::Sub": "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Delivery}"
         },
         "FunctionUrlAuthType": "AWS_IAM"
-      }
+      },
+      "DependsOn": "APIAlias"
     },
     "APIInvokePermission": {
       "Type": "AWS::Lambda::Permission",
@@ -997,7 +1199,8 @@
           "Fn::Sub": "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Delivery}"
         },
         "InvokedViaFunctionUrl": true
-      }
+      },
+      "DependsOn": "APIAlias"
     },
     "WebsiteUrl": {
       "Type": "AWS::Lambda::Url",
@@ -1010,7 +1213,8 @@
         "Qualifier": "live",
         "AuthType": "AWS_IAM",
         "InvokeMode": "BUFFERED"
-      }
+      },
+      "DependsOn": "WebsiteAlias"
     },
     "WebsiteUrlPermission": {
       "Type": "AWS::Lambda::Permission",
@@ -1026,7 +1230,8 @@
           "Fn::Sub": "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Delivery}"
         },
         "FunctionUrlAuthType": "AWS_IAM"
-      }
+      },
+      "DependsOn": "WebsiteAlias"
     },
     "WebsiteInvokePermission": {
       "Type": "AWS::Lambda::Permission",
@@ -1042,7 +1247,8 @@
           "Fn::Sub": "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Delivery}"
         },
         "InvokedViaFunctionUrl": true
-      }
+      },
+      "DependsOn": "WebsiteAlias"
     },
     "WorkerQueue": {
       "Type": "AWS::Lambda::EventSourceMapping",
@@ -1064,7 +1270,8 @@
         "ScalingConfig": {
           "MaximumConcurrency": 2
         }
-      }
+      },
+      "DependsOn": "WorkerAlias"
     },
     "Maintenance": {
       "Type": "AWS::Scheduler::Schedule",
@@ -1095,7 +1302,8 @@
             ]
           }
         }
-      }
+      },
+      "DependsOn": "APIAlias"
     },
     "OriginAccess": {
       "Type": "AWS::CloudFront::OriginAccessControl",
@@ -1437,7 +1645,13 @@
           ]
         },
         "Runtime": "python3.12",
-        "Handler": "index.handler",
+        "Handler": {
+          "Fn::If": [
+            "LiveRuntime",
+            "switchboard.receiver.handler",
+            "index.handler"
+          ]
+        },
         "Timeout": 15,
         "MemorySize": 512,
         "Architectures": [
@@ -1455,6 +1669,45 @@
         },
         "TracingConfig": {
           "Mode": "Active"
+        },
+        "Layers": {
+          "Fn::If": [
+            "LiveRuntime",
+            [
+              "arn:aws:lambda:us-east-1:901920570463:layer:aws-otel-python-amd64-ver-1-32-0:7"
+            ],
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        },
+        "Environment": {
+          "Fn::If": [
+            "LiveRuntime",
+            {
+              "Variables": {
+                "DYNAMODB_TABLE": {
+                  "Ref": "Database"
+                },
+                "SWITCHBOARD_AUTH_MODE": "demo",
+                "SWITCHBOARD_RUNTIME": "aws",
+                "SWITCHBOARD_INVESTIGATION_MODE": "live",
+                "LANGCHAIN_TRACING_V2": "false",
+                "LANGSMITH_TRACING": "false",
+                "AWS_LAMBDA_EXEC_WRAPPER": "/opt/otel-instrument",
+                "OTEL_SERVICE_NAME": "switchboard-receiver",
+                "OTEL_METRICS_EXPORTER": "none",
+                "OTEL_LOGS_EXPORTER": "none",
+                "OTEL_PYTHON_DISABLED_INSTRUMENTATIONS": "fastapi,httpx,requests,urllib,urllib3",
+                "INVESTIGATION_QUEUE_URL": {
+                  "Ref": "Investigations"
+                }
+              }
+            },
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
         }
       }
     },
@@ -1791,7 +2044,8 @@
             }
           }
         }
-      }
+      },
+      "DependsOn": "APIAlias"
     },
     "RuntimeSettings": {
       "Type": "AWS::SSM::Parameter",
@@ -2033,6 +2287,114 @@
           ]
         }
       }
+    },
+    "APIBootstrap": {
+      "Type": "AWS::Lambda::Version",
+      "Condition": "BootstrapAPI",
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "API"
+        },
+        "Description": "Initial api publication"
+      }
+    },
+    "APIAlias": {
+      "Type": "AWS::Lambda::Alias",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "API"
+        },
+        "Name": "live",
+        "FunctionVersion": {
+          "Fn::If": [
+            "BootstrapAPI",
+            {
+              "Fn::GetAtt": [
+                "APIBootstrap",
+                "Version"
+              ]
+            },
+            {
+              "Ref": "APIVersion"
+            }
+          ]
+        }
+      }
+    },
+    "WorkerBootstrap": {
+      "Type": "AWS::Lambda::Version",
+      "Condition": "BootstrapWorker",
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "Worker"
+        },
+        "Description": "Initial worker publication"
+      }
+    },
+    "WorkerAlias": {
+      "Type": "AWS::Lambda::Alias",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "Worker"
+        },
+        "Name": "live",
+        "FunctionVersion": {
+          "Fn::If": [
+            "BootstrapWorker",
+            {
+              "Fn::GetAtt": [
+                "WorkerBootstrap",
+                "Version"
+              ]
+            },
+            {
+              "Ref": "WorkerVersion"
+            }
+          ]
+        }
+      }
+    },
+    "WebsiteBootstrap": {
+      "Type": "AWS::Lambda::Version",
+      "Condition": "BootstrapWebsite",
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "Website"
+        },
+        "Description": "Initial website publication"
+      }
+    },
+    "WebsiteAlias": {
+      "Type": "AWS::Lambda::Alias",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "Website"
+        },
+        "Name": "live",
+        "FunctionVersion": {
+          "Fn::If": [
+            "BootstrapWebsite",
+            {
+              "Fn::GetAtt": [
+                "WebsiteBootstrap",
+                "Version"
+              ]
+            },
+            {
+              "Ref": "WebsiteVersion"
+            }
+          ]
+        }
+      }
     }
   },
   "Outputs": {
@@ -2154,6 +2516,51 @@
       "Type": "String",
       "Default": "bootstrap",
       "Description": "Published receiver version promoted by the release command."
+    },
+    "RuntimeReady": {
+      "Type": "String",
+      "Default": "bootstrap",
+      "AllowedValues": [
+        "bootstrap",
+        "live"
+      ],
+      "Description": "Use live handlers after the first complete application ZIP upload."
+    },
+    "ModelProvider": {
+      "Type": "String",
+      "Default": "deepseek",
+      "AllowedValues": [
+        "deepseek",
+        "bedrock"
+      ],
+      "Description": "Investigation worker model provider."
+    },
+    "BedrockModel": {
+      "Type": "String",
+      "Default": "deepseek.v3.2",
+      "AllowedValues": [
+        "deepseek.v3.2",
+        "openai.gpt-6-luna"
+      ],
+      "Description": "Model used when ModelProvider is bedrock."
+    },
+    "APIVersion": {
+      "Type": "String",
+      "Default": "bootstrap",
+      "AllowedPattern": "bootstrap|[0-9]+",
+      "Description": "Published api version promoted by the release command."
+    },
+    "WorkerVersion": {
+      "Type": "String",
+      "Default": "bootstrap",
+      "AllowedPattern": "bootstrap|[0-9]+",
+      "Description": "Published worker version promoted by the release command."
+    },
+    "WebsiteVersion": {
+      "Type": "String",
+      "Default": "bootstrap",
+      "AllowedPattern": "bootstrap|[0-9]+",
+      "Description": "Published website version promoted by the release command."
     }
   },
   "Conditions": {
@@ -2173,6 +2580,54 @@
       "Fn::Equals": [
         {
           "Ref": "ReceiverVersion"
+        },
+        "bootstrap"
+      ]
+    },
+    "LiveRuntime": {
+      "Fn::Equals": [
+        {
+          "Ref": "RuntimeReady"
+        },
+        "live"
+      ]
+    },
+    "DirectModel": {
+      "Fn::Equals": [
+        {
+          "Ref": "ModelProvider"
+        },
+        "deepseek"
+      ]
+    },
+    "BedrockModelEnabled": {
+      "Fn::Equals": [
+        {
+          "Ref": "ModelProvider"
+        },
+        "bedrock"
+      ]
+    },
+    "BootstrapAPI": {
+      "Fn::Equals": [
+        {
+          "Ref": "APIVersion"
+        },
+        "bootstrap"
+      ]
+    },
+    "BootstrapWorker": {
+      "Fn::Equals": [
+        {
+          "Ref": "WorkerVersion"
+        },
+        "bootstrap"
+      ]
+    },
+    "BootstrapWebsite": {
+      "Fn::Equals": [
+        {
+          "Ref": "WebsiteVersion"
         },
         "bootstrap"
       ]

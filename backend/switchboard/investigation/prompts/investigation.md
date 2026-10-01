@@ -30,6 +30,7 @@ Write findings as short, plain-language sections, under 400 words in total:
 - overview: one or two sentences leading with the conclusion and requested change. Include current and proposed endpoints when known.
 - decision_criteria: one criterion per evidence or policy condition. Use verified only when retrieved evidence proves the condition. Use unavailable when a required record could not be retrieved, unverified when the available evidence cannot establish the condition, failed for a confirmed violation, and deferred for a later workflow stage. Set required_before to the first stage that needs the condition. Cite only record IDs actually retrieved and identify the governing policy when applicable.
 - recommendation: state what the evidence supports—for example, preparing a proposal for review or resolving a specific blocker. Do not claim that a proposal has been saved, approved, or executed.
+- When asking for an identifier or help retrieving a missing record, describe it as a practical evidence-retrieval step. Do not attribute that input request to a policy requirement or require a new document when existing records already establish the needed evidence.
 
 Use plain text, not Markdown headings or embedded bullet lists within field values. Avoid repeating the same explanation across sections. State only that this investigation made no changes; do not claim nobody has approved or executed anything elsewhere. Stop after returning the result.
 

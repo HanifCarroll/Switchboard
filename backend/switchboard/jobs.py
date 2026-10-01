@@ -347,7 +347,10 @@ def process_message(message: dict, context: Any = None):
     from switchboard.investigation.deadline import investigation_deadline
     from switchboard.investigation.fixtures import investigate_ticket_fixture
     from switchboard.investigation.mode import get_investigation_mode
-    from switchboard.investigation.report_validation import ReportValidationError
+    from switchboard.investigation.report_validation import (
+        EmptyModelResponseError,
+        ReportValidationError,
+    )
     from switchboard.investigation.runner import investigate_ticket
 
     try:
@@ -382,14 +385,20 @@ def process_message(message: dict, context: Any = None):
 
         logger.info("Investigation rejected", extra=rejection_details)
         return
-    except Exception:
+    except Exception as error:
+        retry_details = {
+            "run_id": identifier,
+            "stage": "retry",
+            "attempt": claimed["attempt"],
+            "error_type": type(error).__name__,
+        }
+        if isinstance(error, EmptyModelResponseError):
+            retry_details["error_reason"] = str(error)
+            retry_details["report_validation"] = error.diagnostics
+
         logger.warning(
             "Investigation awaits SQS retry",
-            extra={
-                "run_id": identifier,
-                "stage": "retry",
-                "attempt": claimed["attempt"],
-            },
+            extra=retry_details,
         )
         raise
     logger.info(

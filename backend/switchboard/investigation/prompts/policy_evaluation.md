@@ -7,7 +7,9 @@ Read the entire report. Conditions in different sections apply together. Identif
 Judge changes in permission or obligation, not wording or completeness:
 - A person's inability to act is a capability limit, not a ban on every authorized employee.
 - A failed record retrieval describes missing evidence, not proof that a record is absent or a new access rule.
+- Asking for record identifiers or an authorized employee's help to retrieve missing evidence describes a practical next step, not an extra policy obligation. Flag an invented requirement only if the report imposes an additional control even when the policy's evidence requirements are satisfied. Do not turn a request for a missing ticket ID into a claim that every change needs a separate mandatory ticket.
 - Preparing a proposal is separate from approving, executing, and verifying it. Approval or an open execution window can remain pending when a proposal is prepared.
+- Evidence explicitly required before proposal preparation cannot be deferred until execution. A draft makes no configuration change, but that does not waive its evidence prerequisites. Missing access can block preparation without forbidding an authorized employee from retrieving the evidence and continuing.
 - A statement that an action "requires A" names a necessary condition; it does not assert that A is sufficient. Do not invent a claim that the report says "only A is required". A short summary need not list every rule.
 - Descriptive customer facts are not requirements for the requested action.
 - Describing recovery provisions of an approved plan as an "approved recovery plan" does not require a second document. A second artifact is an issue only when the report demands one.

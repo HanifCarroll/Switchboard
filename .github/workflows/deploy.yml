@@ -105,7 +105,7 @@ jobs:
         env:
           COMPONENT: ${{ inputs.component || 'all' }}
         run: uv run --project backend python scripts/aws.py build --component "$COMPONENT"
-      - name: Publish immutable versions and update live aliases
+      - name: Publish immutable versions and promote CloudFormation aliases
         env:
           COMPONENT: ${{ inputs.component || 'all' }}
         run: uv run --project backend python scripts/aws.py release --component "$COMPONENT"
@@ -117,3 +117,4 @@ jobs:
           path: |
             aws/local/packaging.json
             aws/local/previous-aliases.json
+            aws/local/previous-runtime.json

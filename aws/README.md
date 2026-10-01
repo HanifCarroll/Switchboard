@@ -18,7 +18,9 @@ uv run --project backend python scripts/aws.py jobs --profile hc-studio
 uv run --project backend python scripts/aws.py delivery --profile hc-studio
 ```
 
-`template.json` owns hosting resources, Function URLs, CloudFront/OAC/WAF and its subscription, storage, queues and worker mapping, maintenance schedule, Step Functions, the shared settings parameter, monitoring, and IAM roles. SecureString credentials are supplied separately because CloudFormation does not support that parameter type. The release helper applies Lambda handlers, environment variables, layers, and tracing settings, then publishes code versions. It updates API, worker, and website live aliases directly; the receiver alias is promoted through the `ReceiverVersion` stack parameter. The `jobs` and `delivery` commands verify stack-owned resources. Use `provision` for infrastructure changes and `release` for application code.
+`template.json` owns hosting resources, Lambda runtime settings and all four live aliases, Function URLs, CloudFront/OAC/WAF and its subscription, storage, queues and worker mapping, maintenance schedule, Step Functions, the shared settings parameter, monitoring, and IAM roles. SecureString credentials are supplied separately because CloudFormation does not support that parameter type. ZIPs are uploaded directly to Lambda; published code versions are application artifacts. Releases and rollbacks select them through the `APIVersion`, `WorkerVersion`, `WebsiteVersion`, and `ReceiverVersion` stack parameters. The `jobs` and `delivery` commands verify stack-owned resources. Use `provision` for template changes and `release` for application code.
+
+On a new stack, the first release must include all components. The helper uploads every ZIP before switching `RuntimeReady` to `live` through CloudFormation, then publishes versions and promotes the aliases. Subsequent releases preserve the runtime configuration, alert recipient, and unselected components. `ModelProvider` and `BedrockModel` are stack parameters; model overrides update those parameters before publishing the worker version.
 
 Backend builds use Linux Python 3.12 wheels. Website builds include Next.js standalone output, public files, static assets, and one previous release's assets. ZIPs upload directly to Lambda. Package and response limits are checked before deployment.
 
@@ -32,7 +34,7 @@ uv run --project backend python scripts/aws.py rollback --component website --pr
 
 Use `--component backend` for API, worker, and receiver, or `--component all` for all functions. Published versions are immutable; `live` aliases select the active release. Keep API/frontend contracts compatible during independent releases. In-flight invocations can finish on their previous version.
 
-The helper saves previous aliases before changing each component to ignored `aws/local/previous-aliases.json`, and package hashes/sizes to `aws/local/packaging.json`. Keep the desired receipt before another release replaces it. Forward releases retain one older static asset set; rollback may require a page reload because an older ZIP cannot contain a future release's assets.
+The helper saves previous aliases before changing each component to ignored `aws/local/previous-aliases.json`, backend model settings to `aws/local/previous-runtime.json`, and package hashes/sizes to `aws/local/packaging.json`. Backend rollback restores both version selections and model settings through CloudFormation. Keep the desired receipts before another release replaces them. Forward releases retain one older static asset set; rollback may require a page reload because an older ZIP cannot contain a future release's assets.
 
 ## GitHub Actions
 
@@ -89,7 +91,7 @@ Connect an email recipient with `provision --alert-email you@example.com`. Confi
 
 Policy-blocked reports complete normally and do not trigger the rejected-job metric. Investigate failures before replaying jobs; retries can repeat model work before the validated checkpoint.
 
-Policy-review failures include `error_reason` and `report_validation` in the worker's `Investigation rejected` log. These fields retain the rejected report, reviewer or revision output, validation errors, and response finish reason/token counts where available. Recoverable findings appear in `Investigation report requires revision` with the original report and policy issues. Correlate that entry with the job's run ID using the Lambda request ID. Diagnostic content stays in private CloudWatch logs; public job responses retain the safe error message.
+Policy-review failures include `error_reason` and `report_validation` in the worker's `Investigation rejected` log. Empty model responses retain the same diagnostics in `Investigation awaits SQS retry` and leave the job eligible for queue redelivery; they never pass validation or publish a proposal. These fields retain the rejected report, reviewer or revision output, validation errors, and response finish reason/token counts where available. Recoverable findings appear in `Investigation report requires revision` with the original report and policy issues. Correlate that entry with the job's run ID using the Lambda request ID. Diagnostic content stays in private CloudWatch logs; public job responses retain the safe error message.
 
 ## Tracing
 

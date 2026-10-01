@@ -17,7 +17,7 @@ This policy replaces version 1. Engineers may no longer approve their own produc
 
 Employees may access only their assigned customers' records. Support specialists can investigate tickets and read integration status and redacted diagnostic summaries, but cannot change configuration. Implementation engineers and technical leads can prepare and execute permitted changes. Credentials must not appear in the agent conversation.
 
-Every endpoint change needs a request from an authorized customer contact and a destination registered for that customer and environment. Check the customer registry and current configuration; ticket claims alone are insufficient. An unregistered destination blocks the change until registration is completed separately.
+Before preparing a proposal, verify the authorized customer contact, registered destination for that customer and environment, and current configuration using the customer registry and configuration records. Ticket claims alone are insufficient. Missing access to these records blocks proposal preparation until an authorized employee retrieves and verifies the evidence. An unregistered destination blocks the change until registration is completed separately.
 
 ## Approval and execution
 
@@ -31,6 +31,6 @@ Approval covers the exact customer, integration, environment, current configurat
 
 Confirm that the approved endpoint is active and that the intended destination received a synthetic test event. A configuration update alone is not proof of successful delivery.
 
-If verification fails, restore the old endpoint only when the approved plan permits it and no intervening change makes restoration unsafe. Otherwise, stop for manual intervention. An uncertain result remains open; do not report completion or repeat an action without establishing what occurred.
+If verification fails, restore the old endpoint only when the approved plan permits it and no intervening change makes restoration unsafe. Otherwise, stop for manual intervention. An uncertain result remains open for manual investigation; do not report completion or repeat an action without establishing what occurred.
 
 Record the requester, approver where required, exact change, execution result, and verification evidence in the change register. Update the support ticket with the actual outcome.

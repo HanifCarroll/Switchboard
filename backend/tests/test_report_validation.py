@@ -9,6 +9,7 @@ from langchain_core.messages import AIMessage
 from langchain_deepseek import ChatDeepSeek
 
 from switchboard.investigation.report_validation import (
+    EmptyModelResponseError,
     PolicySource,
     ReportValidationError,
     evaluate_policy_claims,
@@ -179,7 +180,6 @@ def test_report_rejects_fabricated_policy_excerpt():
 @pytest.mark.parametrize(
     "response",
     [
-        "",
         "Looks good",
         json.dumps(
             {
@@ -235,3 +235,26 @@ def test_invalid_revision_retains_the_draft_review_and_raw_output():
         mode="json"
     )
     assert rejected.value.diagnostics["validation_errors"]
+
+
+@pytest.mark.parametrize("stage", ["policy_review", "report_revision"])
+def test_empty_model_output_retries_without_accepting_a_report(stage):
+    metadata = {"finish_reason": "length", "token_usage": {"completion_tokens": 16384}}
+    messages = [AIMessage(content=" \n", response_metadata=metadata)]
+    if stage == "report_revision":
+        messages.insert(0, AIMessage(content=issue_response()))
+    model = GenericFakeChatModel(messages=iter(messages))
+
+    with pytest.raises(EmptyModelResponseError) as empty:
+        validate_investigation_report(
+            draft=draft_report(), policies=POLICIES, model=model
+        )
+
+    assert not isinstance(empty.value, ValueError)
+    assert empty.value.diagnostics["stage"] == stage
+    assert empty.value.diagnostics["rejected_output"] == " \n"
+    assert empty.value.diagnostics["rejected_report"] == draft_report().model_dump(
+        mode="json"
+    )
+    assert empty.value.diagnostics["response_finish_reason"] == "length"
+    assert empty.value.diagnostics["response_token_usage"] == metadata["token_usage"]

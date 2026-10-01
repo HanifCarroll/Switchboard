@@ -10,7 +10,10 @@ from botocore.exceptions import ClientError
 
 from switchboard.demo.portfolio import initialize_demo_portfolio
 from switchboard.dynamodb import DynamoStore
-from switchboard.investigation.report_validation import ReportValidationError
+from switchboard.investigation.report_validation import (
+    EmptyModelResponseError,
+    ReportValidationError,
+)
 from switchboard.jobs import process_message, read, submit
 from switchboard.maintenance import maintain
 from switchboard.storage import StorageError, WorkspaceStorage
@@ -232,6 +235,56 @@ def test_replaced_owner_cannot_publish(queued):
     with pytest.raises(StorageError, match="Records have changed"):
         store.save_proposal(storage.workspace_id, {"id": "stale", "created_at": "now"})
     assert store.get(partition, "PROPOSAL#stale") is None
+
+
+def test_empty_model_response_is_retried_without_publishing(
+    queued, monkeypatch, caplog
+):
+    storage, sqs, _, _ = queued
+    job = submit_job(storage, sqs)
+    previous_proposals = storage.list_pending_proposals()
+    target = "switchboard.investigation.fixtures.investigate_ticket_fixture"
+
+    def empty_response(**arguments):
+        raise EmptyModelResponseError(
+            diagnostics={"stage": "policy_review", "rejected_output": ""}
+        )
+
+    with monkeypatch.context() as patch:
+        patch.setattr(target, empty_response)
+        with pytest.raises(EmptyModelResponseError):
+            process_message(message(storage, job.run_id))
+
+    assert not storage.list_runs(ticket_id="CHG-1042")
+    assert storage.list_pending_proposals() == previous_proposals
+    retry = next(
+        r for r in caplog.records if r.message == "Investigation awaits SQS retry"
+    )
+    assert retry.error_type == "EmptyModelResponseError"
+    assert retry.report_validation["rejected_output"] == ""
+    public = read(storage=storage, employee_id="emp-alex", run_id=job.run_id)
+    assert public.status == "running"
+    assert "report_validation" not in public.model_dump()
+
+    # SQS redelivery after the owner lease expires must recover the same job.
+    store = storage.transport
+    partition = store.partition(storage.workspace_id)
+    claimed = store.get(partition, f"JOB#{job.run_id}")
+    store.transaction(
+        storage.workspace_id,
+        [
+            store.replace(
+                partition, f"JOB#{job.run_id}", claimed, {**claimed, "lease_until": 0}
+            )
+        ],
+    )
+    process_message(message(storage, job.run_id))
+    assert (
+        read(storage=storage, employee_id="emp-alex", run_id=job.run_id).status
+        == "completed"
+    )
+    assert len(storage.list_runs(ticket_id="CHG-1042")) == 1
+    assert store.get(partition, f"JOB#{job.run_id}")["attempt"] == 2
 
 
 def test_maintenance_does_not_dispatch_revoked_pending_work(queued):

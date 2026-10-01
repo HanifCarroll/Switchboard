@@ -136,10 +136,18 @@ def test_report_is_rejected_when_revision_still_has_policy_issues():
         )
     )
 
-    with pytest.raises(ReportValidationError, match="still contains policy issues"):
+    with pytest.raises(
+        ReportValidationError, match="still contains policy issues"
+    ) as rejected:
         validate_investigation_report(
             draft=draft_report(), policies=POLICIES, model=model
         )
+
+    assert rejected.value.diagnostics["stage"] == "revision_review"
+    assert rejected.value.diagnostics["rejected_report"] == draft_report().model_dump(
+        mode="json"
+    )
+    assert rejected.value.diagnostics["second_review"] == json.loads(issue_response())
 
 
 def test_report_rejects_fabricated_policy_excerpt():
@@ -149,10 +157,15 @@ def test_report_rejects_fabricated_policy_excerpt():
         messages=iter([AIMessage(content=json.dumps(fabricated))])
     )
 
-    with pytest.raises(ReportValidationError, match="unverified source excerpt"):
+    with pytest.raises(
+        ReportValidationError, match="unverified source excerpt"
+    ) as rejected:
         validate_investigation_report(
             draft=draft_report(), policies=POLICIES, model=model
         )
+
+    assert json.loads(rejected.value.diagnostics["rejected_output"]) == fabricated
+    assert rejected.value.diagnostics["policy_source"] == POLICIES[0].content
 
 
 @pytest.mark.parametrize(
@@ -177,9 +190,34 @@ def test_report_rejects_fabricated_policy_excerpt():
 def test_invalid_judge_output_is_not_a_pass(response):
     model = GenericFakeChatModel(messages=iter([AIMessage(content=response)]))
 
-    with pytest.raises(ReportValidationError, match="invalid output"):
+    with pytest.raises(ReportValidationError, match="invalid output") as rejected:
         evaluate_policy_claims(
             investigation_output="Never roll back.",
             policies=POLICIES,
             model=model,
         )
+
+    assert rejected.value.diagnostics["rejected_output"] == response
+    assert rejected.value.diagnostics["rejected_report"] == "Never roll back."
+    assert rejected.value.diagnostics["validation_errors"]
+
+
+def test_invalid_revision_retains_the_draft_review_and_raw_output():
+    model = GenericFakeChatModel(
+        messages=iter([AIMessage(content=issue_response()), AIMessage(content="{}")])
+    )
+
+    with pytest.raises(
+        ReportValidationError, match="revision returned invalid output"
+    ) as rejected:
+        validate_investigation_report(
+            draft=draft_report(), policies=POLICIES, model=model
+        )
+
+    assert rejected.value.diagnostics["stage"] == "report_revision"
+    assert rejected.value.diagnostics["rejected_output"] == "{}"
+    assert rejected.value.diagnostics["policy_review"] == json.loads(issue_response())
+    assert rejected.value.diagnostics["rejected_report"] == draft_report().model_dump(
+        mode="json"
+    )
+    assert rejected.value.diagnostics["validation_errors"]

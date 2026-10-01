@@ -165,8 +165,15 @@ def start_investigation(
                 storage=request_context.storage,
                 now=datetime.now(timezone.utc),
             )
-    except ReportValidationError:
-        logger.exception("Investigation report validation failed")
+    except ReportValidationError as error:
+        logger.exception(
+            "Investigation report validation failed",
+            extra={
+                "ticket_id": request.ticket_id,
+                "error_reason": str(error),
+                "report_validation": error.diagnostics,
+            },
+        )
         raise HTTPException(
             status_code=502,
             detail="The investigation report could not be validated. Try again.",

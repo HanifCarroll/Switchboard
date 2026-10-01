@@ -347,6 +347,7 @@ def process_message(message: dict, context: Any = None):
     from switchboard.investigation.deadline import investigation_deadline
     from switchboard.investigation.fixtures import investigate_ticket_fixture
     from switchboard.investigation.mode import get_investigation_mode
+    from switchboard.investigation.report_validation import ReportValidationError
     from switchboard.investigation.runner import investigate_ticket
 
     try:
@@ -369,15 +370,17 @@ def process_message(message: dict, context: Any = None):
             claimed,
             "Current access or investigation output no longer permits this request.",
         )
-        logger.info(
-            "Investigation rejected",
-            extra={
-                "run_id": identifier,
-                "stage": "failed",
-                "attempt": claimed["attempt"],
-                "error_type": type(error).__name__,
-            },
-        )
+        rejection_details = {
+            "run_id": identifier,
+            "stage": "failed",
+            "attempt": claimed["attempt"],
+            "error_type": type(error).__name__,
+        }
+        if isinstance(error, ReportValidationError):
+            rejection_details["error_reason"] = str(error)
+            rejection_details["report_validation"] = error.diagnostics
+
+        logger.info("Investigation rejected", extra=rejection_details)
         return
     except Exception:
         logger.warning(

@@ -170,14 +170,21 @@ def test_dlq_terminal_failure_and_access_revocation(queued):
     assert store.get(partition, f"JOB#{next_job.run_id}")["status"] == "failed"
 
 
-def test_rejected_report_logs_the_error_type_without_model_content(
+def test_rejected_report_logs_diagnostics_without_exposing_them_in_public_results(
     queued, monkeypatch, caplog
 ):
     storage, sqs, _, _ = queued
     job = submit_job(storage, sqs)
 
     def reject_report(**arguments):
-        raise ReportValidationError("Private model content must not reach logs")
+        raise ReportValidationError(
+            "Policy review returned invalid output",
+            diagnostics={
+                "stage": "policy_review",
+                "rejected_output": "Invalid reviewer JSON",
+                "rejected_report": {"outcome": "blocked"},
+            },
+        )
 
     monkeypatch.setattr(
         "switchboard.investigation.fixtures.investigate_ticket_fixture", reject_report
@@ -191,7 +198,12 @@ def test_rejected_report_logs_the_error_type_without_model_content(
     )
     rejected = next(r for r in caplog.records if r.message == "Investigation rejected")
     assert rejected.error_type == "ReportValidationError"
-    assert "Private model content" not in caplog.text
+    assert rejected.run_id == str(job.run_id)
+    assert rejected.error_reason == "Policy review returned invalid output"
+    assert rejected.report_validation["rejected_output"] == "Invalid reviewer JSON"
+    public_result = read(storage=storage, employee_id="emp-alex", run_id=job.run_id)
+    assert "Invalid reviewer JSON" not in public_result.model_dump_json()
+    assert "report_validation" not in public_result.model_dump()
     assert not storage.list_runs(ticket_id="CHG-1042")
 
 

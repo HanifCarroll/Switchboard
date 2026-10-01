@@ -55,6 +55,10 @@ class PolicyReview(Record):
 class ReportValidationError(ValueError):
     """The report could not be shown as policy-faithful."""
 
+    def __init__(self, message: str, *, diagnostics: dict | None = None):
+        super().__init__(message)
+        self.diagnostics = diagnostics or {}
+
 
 @dataclass(frozen=True)
 class ValidatedInvestigationReport:
@@ -71,7 +75,13 @@ def validate_investigation_report(
     """Evaluate a report, revise its findings once if needed, and fail closed."""
     # 1. Require policy sources and evaluate the original report.
     if not policies:
-        raise ReportValidationError("Report validation requires policy sources")
+        raise ReportValidationError(
+            "Report validation requires policy sources",
+            diagnostics={
+                "stage": "policy_review",
+                "rejected_report": draft.model_dump(mode="json"),
+            },
+        )
 
     first_review = evaluate_policy_claims(
         investigation_output=draft.model_dump(mode="json"),
@@ -104,7 +114,16 @@ def validate_investigation_report(
         model=model,
     )
     if second_review.issues:
-        raise ReportValidationError("Revised report still contains policy issues")
+        raise ReportValidationError(
+            "Revised report still contains policy issues",
+            diagnostics={
+                "stage": "revision_review",
+                "original_report": draft.model_dump(mode="json"),
+                "rejected_report": revised_report.model_dump(mode="json"),
+                "first_review": first_review.model_dump(mode="json"),
+                "second_review": second_review.model_dump(mode="json"),
+            },
+        )
 
     return ValidatedInvestigationReport(
         investigation=revised_report,
@@ -150,14 +169,29 @@ def evaluate_policy_claims(
     try:
         review = PolicyReview.model_validate_json(response.text)
     except ValidationError as error:
-        raise ReportValidationError("Policy review returned invalid output") from error
+        raise ReportValidationError(
+            "Policy review returned invalid output",
+            diagnostics={
+                "stage": "policy_review",
+                "rejected_report": investigation_output,
+                "rejected_output": response.text,
+                "validation_errors": json.loads(error.json(include_url=False)),
+            },
+        ) from error
 
     sources = {policy.id: policy.content for policy in policies}
     for issue in review.issues:
         source = sources.get(issue.policy_id)
         if source is None or issue.policy_excerpt not in source:
             raise ReportValidationError(
-                "Policy review contains an unverified source excerpt"
+                "Policy review contains an unverified source excerpt",
+                diagnostics={
+                    "stage": "policy_review",
+                    "rejected_report": investigation_output,
+                    "rejected_output": response.text,
+                    "unverified_issue": issue.model_dump(mode="json"),
+                    "policy_source": source,
+                },
             )
 
     return review
@@ -200,7 +234,14 @@ def _revise_findings(
         return InvestigationFindings.model_validate_json(response.text)
     except ValidationError as error:
         raise ReportValidationError(
-            "Policy revision returned invalid output"
+            "Policy revision returned invalid output",
+            diagnostics={
+                "stage": "report_revision",
+                "rejected_report": draft.model_dump(mode="json"),
+                "policy_review": review.model_dump(mode="json"),
+                "rejected_output": response.text,
+                "validation_errors": json.loads(error.json(include_url=False)),
+            },
         ) from error
 
 

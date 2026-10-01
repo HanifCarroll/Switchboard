@@ -188,6 +188,10 @@ def evaluate_policy_claims(
                 "stage": "policy_review",
                 "rejected_report": investigation_output,
                 "rejected_output": response.text,
+                "response_finish_reason": response.response_metadata.get(
+                    "finish_reason"
+                ),
+                "response_token_usage": response.response_metadata.get("token_usage"),
                 "validation_errors": json.loads(error.json(include_url=False)),
             },
         ) from error
@@ -253,6 +257,10 @@ def _revise_findings(
                 "rejected_report": draft.model_dump(mode="json"),
                 "policy_review": review.model_dump(mode="json"),
                 "rejected_output": response.text,
+                "response_finish_reason": response.response_metadata.get(
+                    "finish_reason"
+                ),
+                "response_token_usage": response.response_metadata.get("token_usage"),
                 "validation_errors": json.loads(error.json(include_url=False)),
             },
         ) from error

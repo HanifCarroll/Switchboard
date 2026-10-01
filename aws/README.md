@@ -18,7 +18,7 @@ uv run --project backend python scripts/aws.py jobs --profile hc-studio
 uv run --project backend python scripts/aws.py delivery --profile hc-studio
 ```
 
-`template.json` owns hosting, Function URLs, CloudFront/OAC/WAF and its subscription, storage, queues and worker mapping, maintenance schedule, Step Functions, the shared settings parameter, monitoring, and IAM roles. SecureString credentials are supplied separately because CloudFormation does not support that parameter type. The helper publishes code versions and selects live aliases; the receiver alias is promoted through the `ReceiverVersion` stack parameter. The `jobs` and `delivery` commands verify stack-owned resources. Use `provision` for infrastructure changes and `release` for application code.
+`template.json` owns hosting resources, Function URLs, CloudFront/OAC/WAF and its subscription, storage, queues and worker mapping, maintenance schedule, Step Functions, the shared settings parameter, monitoring, and IAM roles. SecureString credentials are supplied separately because CloudFormation does not support that parameter type. The release helper applies Lambda handlers, environment variables, layers, and tracing settings, then publishes code versions. It updates API, worker, and website live aliases directly; the receiver alias is promoted through the `ReceiverVersion` stack parameter. The `jobs` and `delivery` commands verify stack-owned resources. Use `provision` for infrastructure changes and `release` for application code.
 
 Backend builds use Linux Python 3.12 wheels. Website builds include Next.js standalone output, public files, static assets, and one previous release's assets. ZIPs upload directly to Lambda. Package and response limits are checked before deployment.
 
@@ -88,6 +88,8 @@ Open the `switchboard` CloudWatch dashboard in `us-east-1`. Nine standard alarms
 Connect an email recipient with `provision --alert-email you@example.com`. Confirm the SNS subscription from that inbox; until confirmation, the alarms and topic work but email delivery remains pending. Later provisions retain the recipient when the option is omitted. Pass an empty string to remove the email subscription.
 
 Policy-blocked reports complete normally and do not trigger the rejected-job metric. Investigate failures before replaying jobs; retries can repeat model work before the validated checkpoint.
+
+Policy-review failures include `error_reason` and `report_validation` in the worker's `Investigation rejected` log. These fields retain the rejected report, reviewer or revision output, validation errors, and response finish reason/token counts where available. Recoverable findings appear in `Investigation report requires revision` with the original report and policy issues. Correlate that entry with the job's run ID using the Lambda request ID. Diagnostic content stays in private CloudWatch logs; public job responses retain the safe error message.
 
 ## Tracing
 

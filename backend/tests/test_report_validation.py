@@ -179,6 +179,7 @@ def test_report_rejects_fabricated_policy_excerpt():
 @pytest.mark.parametrize(
     "response",
     [
+        "",
         "Looks good",
         json.dumps(
             {
@@ -196,7 +197,10 @@ def test_report_rejects_fabricated_policy_excerpt():
     ],
 )
 def test_invalid_judge_output_is_not_a_pass(response):
-    model = GenericFakeChatModel(messages=iter([AIMessage(content=response)]))
+    metadata = {"finish_reason": "length", "token_usage": {"completion_tokens": 16384}}
+    model = GenericFakeChatModel(
+        messages=iter([AIMessage(content=response, response_metadata=metadata)])
+    )
 
     with pytest.raises(ReportValidationError, match="invalid output") as rejected:
         evaluate_policy_claims(
@@ -208,6 +212,8 @@ def test_invalid_judge_output_is_not_a_pass(response):
     assert rejected.value.diagnostics["rejected_output"] == response
     assert rejected.value.diagnostics["rejected_report"] == "Never roll back."
     assert rejected.value.diagnostics["validation_errors"]
+    assert rejected.value.diagnostics["response_finish_reason"] == "length"
+    assert rejected.value.diagnostics["response_token_usage"] == metadata["token_usage"]
 
 
 def test_invalid_revision_retains_the_draft_review_and_raw_output():

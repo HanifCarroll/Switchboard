@@ -39,7 +39,7 @@ For an initial stack in another account, authenticate an administrator and run t
 ```sh
 UV_LOCKED=1 sam build
 (cd backend && uv run python ../scripts/sam_artifacts.py clean)
-sam deploy --resolve-s3 --profile hc-studio
+sam deploy --config-file "$PWD/samconfig.toml" --resolve-s3 --profile hc-studio
 ```
 
 ## Deployment checks and rollback

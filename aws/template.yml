@@ -490,6 +490,11 @@ Resources:
                   - Fn::Sub:
                       arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:changeSet/samcli-deploy*/*
               - Effect: Allow
+                Action: cloudformation:CreateChangeSet
+                Resource:
+                  - Fn::Sub: arn:aws:cloudformation:${AWS::Region}:aws:transform/LanguageExtensions
+                  - Fn::Sub: arn:aws:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31
+              - Effect: Allow
                 Action: iam:GetRole
                 Resource:
                   Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/switchboard-*
@@ -1715,7 +1720,7 @@ Parameters:
     Description: Maximum new investigations per visitor per UTC day.
   ReserveConcurrency:
     Type: String
-    Default: enabled
+    Default: disabled
     AllowedValues:
       - enabled
       - disabled

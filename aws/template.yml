@@ -725,42 +725,118 @@ Resources:
     Properties:
       DashboardName: switchboard
       DashboardBody:
-        Fn::Sub:
-          - '{"widgets": [{"type": "metric", "x": 0, "y": 0, "width": 24, "height": 6, "properties": {"title": "Lambda
-            invocations and errors", "region": "us-east-1", "period": 300, "stat": "Sum", "metrics": [["AWS/Lambda",
-            "Invocations", "FunctionName", "switchboard-api"], ["AWS/Lambda", "Errors", "FunctionName", "switchboard-api"],
-            ["AWS/Lambda", "Throttles", "FunctionName", "switchboard-api"], ["AWS/Lambda", "Invocations", "FunctionName",
-            "switchboard-worker"], ["AWS/Lambda", "Errors", "FunctionName", "switchboard-worker"], ["AWS/Lambda",
-            "Throttles", "FunctionName", "switchboard-worker"], ["AWS/Lambda", "Invocations", "FunctionName", "switchboard-website"],
-            ["AWS/Lambda", "Errors", "FunctionName", "switchboard-website"], ["AWS/Lambda", "Throttles", "FunctionName",
-            "switchboard-website"], ["AWS/Lambda", "Invocations", "FunctionName", "switchboard-receiver"], ["AWS/Lambda",
-            "Errors", "FunctionName", "switchboard-receiver"], ["AWS/Lambda", "Throttles", "FunctionName", "switchboard-receiver"]]}},
-            {"type": "metric", "x": 0, "y": 6, "width": 24, "height": 6, "properties": {"title": "Lambda duration",
-            "region": "us-east-1", "period": 300, "stat": "p95", "metrics": [["AWS/Lambda", "Duration", "FunctionName",
-            "switchboard-api"], ["AWS/Lambda", "Duration", "FunctionName", "switchboard-worker"], ["AWS/Lambda",
-            "Duration", "FunctionName", "switchboard-website"], ["AWS/Lambda", "Duration", "FunctionName", "switchboard-receiver"]]}},
-            {"type": "metric", "x": 0, "y": 12, "width": 24, "height": 6, "properties": {"title": "Investigation
-            queues", "region": "us-east-1", "period": 300, "stat": "Maximum", "metrics": [["AWS/SQS", "ApproximateNumberOfMessagesVisible",
-            "QueueName", "switchboard-investigations"], ["AWS/SQS", "ApproximateNumberOfMessagesNotVisible", "QueueName",
-            "switchboard-investigations"], ["AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", "switchboard-investigations"],
-            ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "switchboard-failed"], ["AWS/SQS", "ApproximateNumberOfMessagesNotVisible",
-            "QueueName", "switchboard-failed"], ["AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", "switchboard-failed"]]}},
-            {"type": "metric", "x": 0, "y": 18, "width": 24, "height": 6, "properties": {"title": "DynamoDB capacity
-            and throttling", "region": "us-east-1", "period": 300, "stat": "Sum", "metrics": [["AWS/DynamoDB", "ConsumedReadCapacityUnits",
-            "TableName", "switchboard"], ["AWS/DynamoDB", "ConsumedWriteCapacityUnits", "TableName", "switchboard"],
-            ["AWS/DynamoDB", "ReadThrottleEvents", "TableName", "switchboard"], ["AWS/DynamoDB", "WriteThrottleEvents",
-            "TableName", "switchboard"]]}}, {"type": "metric", "x": 0, "y": 24, "width": 24, "height": 6, "properties":
-            {"title": "Regional Lambda concurrency", "region": "us-east-1", "period": 300, "stat": "Maximum", "metrics":
-            [["AWS/Lambda", "ConcurrentExecutions"], ["AWS/Lambda", "ClaimedAccountConcurrency"]]}}, {"type": "metric",
-            "x": 0, "y": 30, "width": 24, "height": 6, "properties": {"title": "Rejected investigations", "region":
-            "us-east-1", "period": 300, "stat": "Sum", "metrics": [["Switchboard", "FailedInvestigations"]]}}, {"type":
-            "metric", "x": 0, "y": 36, "width": 24, "height": 6, "properties": {"title": "Change workflows", "region":
-            "us-east-1", "period": 300, "stat": "Sum", "metrics": [["AWS/States", "ExecutionsStarted", "StateMachineArn",
-            "${WorkflowArn}"], ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", "${WorkflowArn}"], ["AWS/States",
-            "ExecutionsFailed", "StateMachineArn", "${WorkflowArn}"], ["AWS/States", "ExecutionsTimedOut", "StateMachineArn",
-            "${WorkflowArn}"]]}}]}'
-          - WorkflowArn:
-              Ref: Workflow
+        Fn::ToJsonString:
+          widgets:
+            - type: metric
+              x: 0
+              y: 0
+              width: 24
+              height: 6
+              properties:
+                title: Lambda invocations and errors
+                region: us-east-1
+                period: 300
+                stat: Sum
+                metrics:
+                  - [AWS/Lambda, Invocations, FunctionName, switchboard-api]
+                  - [AWS/Lambda, Errors, FunctionName, switchboard-api]
+                  - [AWS/Lambda, Throttles, FunctionName, switchboard-api]
+                  - [AWS/Lambda, Invocations, FunctionName, switchboard-worker]
+                  - [AWS/Lambda, Errors, FunctionName, switchboard-worker]
+                  - [AWS/Lambda, Throttles, FunctionName, switchboard-worker]
+                  - [AWS/Lambda, Invocations, FunctionName, switchboard-website]
+                  - [AWS/Lambda, Errors, FunctionName, switchboard-website]
+                  - [AWS/Lambda, Throttles, FunctionName, switchboard-website]
+                  - [AWS/Lambda, Invocations, FunctionName, switchboard-receiver]
+                  - [AWS/Lambda, Errors, FunctionName, switchboard-receiver]
+                  - [AWS/Lambda, Throttles, FunctionName, switchboard-receiver]
+            - type: metric
+              x: 0
+              y: 6
+              width: 24
+              height: 6
+              properties:
+                title: Lambda duration
+                region: us-east-1
+                period: 300
+                stat: p95
+                metrics:
+                  - [AWS/Lambda, Duration, FunctionName, switchboard-api]
+                  - [AWS/Lambda, Duration, FunctionName, switchboard-worker]
+                  - [AWS/Lambda, Duration, FunctionName, switchboard-website]
+                  - [AWS/Lambda, Duration, FunctionName, switchboard-receiver]
+            - type: metric
+              x: 0
+              y: 12
+              width: 24
+              height: 6
+              properties:
+                title: Investigation queues
+                region: us-east-1
+                period: 300
+                stat: Maximum
+                metrics:
+                  - [AWS/SQS, ApproximateNumberOfMessagesVisible, QueueName, switchboard-investigations]
+                  - [AWS/SQS, ApproximateNumberOfMessagesNotVisible, QueueName, switchboard-investigations]
+                  - [AWS/SQS, ApproximateAgeOfOldestMessage, QueueName, switchboard-investigations]
+                  - [AWS/SQS, ApproximateNumberOfMessagesVisible, QueueName, switchboard-failed]
+                  - [AWS/SQS, ApproximateNumberOfMessagesNotVisible, QueueName, switchboard-failed]
+                  - [AWS/SQS, ApproximateAgeOfOldestMessage, QueueName, switchboard-failed]
+            - type: metric
+              x: 0
+              y: 18
+              width: 24
+              height: 6
+              properties:
+                title: DynamoDB capacity and throttling
+                region: us-east-1
+                period: 300
+                stat: Sum
+                metrics:
+                  - [AWS/DynamoDB, ConsumedReadCapacityUnits, TableName, switchboard]
+                  - [AWS/DynamoDB, ConsumedWriteCapacityUnits, TableName, switchboard]
+                  - [AWS/DynamoDB, ReadThrottleEvents, TableName, switchboard]
+                  - [AWS/DynamoDB, WriteThrottleEvents, TableName, switchboard]
+            - type: metric
+              x: 0
+              y: 24
+              width: 24
+              height: 6
+              properties:
+                title: Regional Lambda concurrency
+                region: us-east-1
+                period: 300
+                stat: Maximum
+                metrics:
+                  - [AWS/Lambda, ConcurrentExecutions]
+                  - [AWS/Lambda, ClaimedAccountConcurrency]
+            - type: metric
+              x: 0
+              y: 30
+              width: 24
+              height: 6
+              properties:
+                title: Rejected investigations
+                region: us-east-1
+                period: 300
+                stat: Sum
+                metrics:
+                  - [Switchboard, FailedInvestigations]
+            - type: metric
+              x: 0
+              y: 36
+              width: 24
+              height: 6
+              properties:
+                title: Change workflows
+                region: us-east-1
+                period: 300
+                stat: Sum
+                metrics:
+                  - [AWS/States, ExecutionsStarted, StateMachineArn, {Ref: Workflow}]
+                  - [AWS/States, ExecutionsSucceeded, StateMachineArn, {Ref: Workflow}]
+                  - [AWS/States, ExecutionsFailed, StateMachineArn, {Ref: Workflow}]
+                  - [AWS/States, ExecutionsTimedOut, StateMachineArn, {Ref: Workflow}]
   AlertsPolicy:
     Type: AWS::SNS::TopicPolicy
     Properties:

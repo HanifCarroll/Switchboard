@@ -444,7 +444,7 @@ Resources:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
                 token.actions.githubusercontent.com:sub:
-                  repo:HanifCarroll@26860300/b2b-saas-internal-agent@1375983110:ref:refs/heads/main
+                  repo:HanifCarroll@26860300/Switchboard@1375983110:ref:refs/heads/main
       Policies:
         - PolicyName: ReleaseExistingFunctions
           PolicyDocument:
@@ -1544,7 +1544,7 @@ Resources:
                       + link
                       + "\n\n"
                       + "Troubleshooting guide:\n"
-                      + "https://github.com/HanifCarroll/b2b-saas-internal-agent/blob/main/aws/README.md"
+                      + "https://github.com/HanifCarroll/Switchboard/blob/main/aws/README.md"
                   )
 
                   # 3. Deliver through the existing confirmed email subscription.

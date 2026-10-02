@@ -511,8 +511,15 @@ Resources:
                   - cloudfront:GetDistribution
                   - cloudfront:GetDistributionConfig
                   - cloudfront:ListTagsForResource
+                  - cloudfront:UpdateDistribution
                 Resource:
                   Fn::Sub: arn:aws:cloudfront::${AWS::AccountId}:distribution/${Delivery}
+              - Effect: Allow
+                Action:
+                  - acm:DescribeCertificate
+                  - acm:ListTagsForCertificate
+                Resource:
+                  Ref: WebsiteCertificate
               - Effect: Allow
                 Action: pricingplanmanager:GetSubscription
                 Resource: '*'
@@ -924,12 +931,20 @@ Resources:
         CloudWatchMetricsEnabled: false
         MetricName: switchboard
       Scope: CLOUDFRONT
+  WebsiteCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: switchboard.hanifcarroll.com
+      ValidationMethod: DNS
+      CertificateExport: DISABLED
   Delivery:
     Type: AWS::CloudFront::Distribution
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
       DistributionConfig:
+        Aliases:
+          - switchboard.hanifcarroll.com
         DefaultRootObject: ''
         Origins:
           - Id: website
@@ -1044,7 +1059,10 @@ Resources:
         PriceClass: PriceClass_All
         Enabled: true
         ViewerCertificate:
-          CloudFrontDefaultCertificate: true
+          AcmCertificateArn:
+            Ref: WebsiteCertificate
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
         Restrictions:
           GeoRestriction:
             RestrictionType: none
@@ -1690,8 +1708,7 @@ Outputs:
   ModelKeyParameter:
     Value: /switchboard/live/deepseek-api-key
   DeliveryURL:
-    Value:
-      Fn::Sub: https://${Delivery.DomainName}
+    Value: https://switchboard.hanifcarroll.com
   DeliveryId:
     Value:
       Ref: Delivery

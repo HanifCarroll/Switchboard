@@ -2,7 +2,7 @@
 
 **An AI-assisted workflow for investigating and safely handling customer integration changes.**
 
-[Try the live demo](https://d3ar9mvnjcwzyk.cloudfront.net) · [Architecture](docs/architecture.md) · [Business scenario](docs/endpoint-change-scenario.md)
+[Try the live demo](https://switchboard.hanifcarroll.com) · [Architecture](docs/architecture.md) · [Business scenario](docs/endpoint-change-scenario.md)
 
 Switchboard models an internal team managing webhook endpoint changes for a B2B SaaS company. An employee needs to establish who requested a change, whether the destination is registered, which policy applies, and who can approve it. The agent gathers evidence and prepares a recommendation; application code controls the actual business actions.
 

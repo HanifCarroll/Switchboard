@@ -1,6 +1,6 @@
 # AWS operations
 
-[Live application](https://d3ar9mvnjcwzyk.cloudfront.net) · [Architecture](../docs/architecture.md)
+[Live application](https://switchboard.hanifcarroll.com) · [Architecture](../docs/architecture.md)
 
 The deployment uses four Lambda functions: a Next.js website through AWS Lambda Web Adapter, a FastAPI API through Mangum, a native Python investigation worker, and a signed webhook receiver. Step Functions coordinates the investigation and subsequent manual actions. Parameter Store holds runtime settings and the encrypted model credential. DynamoDB stores application data; SQS delivers jobs; EventBridge Scheduler runs maintenance. CloudFront protects and routes the website and API origins. A small notification Lambda formats operational emails through SNS.
 
@@ -21,7 +21,7 @@ uv run python ../scripts/aws.py delivery --profile hc-studio
 
 SAM builds the Python functions directly from `uv.lock` using its native uv builder. Builds enforce the existing lock and remove development files and environment files before upload. A small Makefile packages the Next.js standalone server, public files, and static assets, retaining one previous release's assets for browsers with older HTML. Lambda Web Adapter and Next.js use port 8081.
 
-`template.yml` combines SAM function definitions with ordinary CloudFormation resources for hosting, protected origins, CloudFront/OAC/WAF, storage, queues, Step Functions, schedules, configuration, monitoring, and scoped IAM roles. SAM uploads artifacts to the private, encrypted, stack-owned `DeploymentArtifacts` bucket. The bucket is for deployment packages; CloudFront serves the website through Lambda.
+`template.yml` combines SAM function definitions with ordinary CloudFormation resources for hosting, protected origins, CloudFront/OAC/WAF, storage, queues, Step Functions, schedules, configuration, monitoring, and scoped IAM roles. SAM uploads artifacts to the private, encrypted, stack-owned `DeploymentArtifacts` bucket. The bucket is for deployment packages; CloudFront serves the website through Lambda. The public address is `switchboard.hanifcarroll.com`. CloudFormation manages its DNS-validated ACM certificate and CloudFront alias. Cloudflare holds the DNS-only CNAME to the distribution and the certificate validation CNAME; the validation record must remain for automatic renewal.
 
 SAM publishes immutable function versions and selects them through each function's `live` alias. Every release builds the full application. Unchanged Python packages reuse their uploaded object. `AWS::LanguageExtensions` resolves parameter values before SAM generates versions, so a change to the model configuration also publishes a worker version. Model selection, alert recipients, and other existing stack parameters are preserved unless explicitly overridden. Always deploy the original SAM template with its parameter values, rather than reusing a previously processed template.
 

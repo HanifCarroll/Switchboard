@@ -2,7 +2,84 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: Switchboard hosting, controlled webhook delivery, change workflows, configuration, storage,
   queues, and observability.
 Transform: ['AWS::LanguageExtensions', 'AWS::Serverless-2016-10-31']
+
+Parameters:
+  AlertEmail:
+    Type: String
+    Default: ''
+    Description: Email recipient for operational alerts; SNS confirmation is required.
+
+  ModelProvider:
+    Type: String
+    Default: bedrock
+    AllowedValues:
+      - deepseek
+      - bedrock
+    Description: Investigation worker model provider.
+
+  BedrockModel:
+    Type: String
+    Default: minimax.minimax-m2.5
+    AllowedValues:
+      - deepseek.v3.2
+      - openai.gpt-6-luna
+      - minimax.minimax-m2.5
+    Description: Model used when ModelProvider is bedrock.
+
+  DailyJobLimit:
+    Type: Number
+    Default: 100
+    MinValue: 1
+    MaxValue: 1000
+    Description: Maximum new demo investigations per UTC day.
+
+  VisitorDailyJobLimit:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    MaxValue: 1000
+    Description: Maximum new investigations per visitor per UTC day.
+
+  ReserveConcurrency:
+    Type: String
+    Default: disabled
+    AllowedValues:
+      - enabled
+      - disabled
+    Description: Enable function reservations after raising the Lambda quota.
+
+  SubmissionWindowLimit:
+    Type: Number
+    Default: 20
+    MinValue: 1
+    MaxValue: 1000
+    Description: Maximum new demo investigations per five-minute UTC window.
+
+Conditions:
+  HasAlertEmail:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: AlertEmail
+          - ''
+
+  DirectModel:
+    Fn::Equals:
+      - Ref: ModelProvider
+      - deepseek
+
+  BedrockModelEnabled:
+    Fn::Equals:
+      - Ref: ModelProvider
+      - bedrock
+
+  ConcurrencyReservations:
+    Fn::Equals:
+      - Ref: ReserveConcurrency
+      - enabled
+
+
 Resources:
+
   Database:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -25,12 +102,14 @@ Resources:
       DeletionProtectionEnabled: true
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
+
   DeadLetters:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: switchboard-failed
       MessageRetentionPeriod: 1209600
       SqsManagedSseEnabled: true
+
   Investigations:
     Type: AWS::SQS::Queue
     Properties:
@@ -42,11 +121,14 @@ Resources:
         deadLetterTargetArn:
           Fn::GetAtt: [DeadLetters, Arn]
         maxReceiveCount: 5
+
+  # API runtime and permissions.
   APILogs:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /aws/lambda/switchboard-api
       RetentionInDays: 7
+
   APIRole:
     Type: AWS::IAM::Role
     Properties:
@@ -63,14 +145,16 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              - Effect: Allow
+              - Sid: WriteFunctionLogs
+                Effect: Allow
                 Action:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource:
                   Fn::Sub:
                     arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/switchboard-api:*
-              - Effect: Allow
+              - Sid: ManageApplicationRecords
+                Effect: Allow
                 Action:
                   - dynamodb:GetItem
                   - dynamodb:Query
@@ -81,51 +165,60 @@ Resources:
                   - dynamodb:DeleteItem
                 Resource:
                   Fn::GetAtt: [Database, Arn]
-              - Effect: Allow
+              - Sid: QueueInvestigations
+                Effect: Allow
                 Action:
                   - sqs:SendMessage
                 Resource:
                   Fn::GetAtt: [Investigations, Arn]
-              - Effect: Allow
+              - Sid: ReadFailedInvestigations
+                Effect: Allow
                 Action:
                   - sqs:ReceiveMessage
                   - sqs:DeleteMessage
                   - sqs:GetQueueAttributes
                 Resource:
                   Fn::GetAtt: [DeadLetters, Arn]
-              - Effect: Allow
+              - Sid: PublishTraces
+                Effect: Allow
                 Action:
                   - xray:PutTraceSegments
                   - xray:PutTelemetryRecords
                 Resource: '*'
-              - Effect: Allow
+              - Sid: ReadRuntimeSettings
+                Effect: Allow
                 Action: ssm:GetParameter
                 Resource:
                   Fn::Sub: arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/switchboard/live/runtime
-              - Effect: Allow
+              - Sid: CompleteWorkflowTasks
+                Effect: Allow
                 Action:
                   - states:SendTaskSuccess
                   - states:SendTaskFailure
                 Resource: '*'
-              - Effect: Allow
+              - Sid: StartChangeWorkflow
+                Effect: Allow
                 Action: states:StartExecution
                 Resource:
                   Fn::Sub:
                     arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:switchboard-change-workflow
-              - Effect: Allow
+              - Sid: InvokeReceiverUrl
+                Effect: Allow
                 Action: lambda:InvokeFunctionUrl
                 Resource:
                   Fn::Sub: ${Receiver.Arn}:live
                 Condition:
                   StringEquals:
                     lambda:FunctionUrlAuthType: AWS_IAM
-              - Effect: Allow
+              - Sid: InvokeReceiverThroughUrl
+                Effect: Allow
                 Action: lambda:InvokeFunction
                 Resource:
                   Fn::Sub: ${Receiver.Arn}:live
                 Condition:
                   Bool:
                     lambda:InvokedViaFunctionUrl: 'true'
+
   API:
     Type: AWS::Serverless::Function
     Properties:
@@ -180,11 +273,14 @@ Resources:
       AutoPublishAliasAllProperties: true
     Metadata:
       BuildMethod: python-uv
+
+  # Investigation worker runtime and permissions.
   WorkerLogs:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /aws/lambda/switchboard-worker
       RetentionInDays: 7
+
   WorkerRole:
     Type: AWS::IAM::Role
     Properties:
@@ -201,14 +297,16 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              - Effect: Allow
+              - Sid: WriteFunctionLogs
+                Effect: Allow
                 Action:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource:
                   Fn::Sub:
                     arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/switchboard-worker:*
-              - Effect: Allow
+              - Sid: ManageInvestigationRecords
+                Effect: Allow
                 Action:
                   - dynamodb:GetItem
                   - dynamodb:Query
@@ -218,19 +316,22 @@ Resources:
                   - dynamodb:DeleteItem
                 Resource:
                   Fn::GetAtt: [Database, Arn]
-              - Effect: Allow
+              - Sid: ConsumeInvestigations
+                Effect: Allow
                 Action:
                   - sqs:ReceiveMessage
                   - sqs:DeleteMessage
                   - sqs:GetQueueAttributes
                 Resource:
                   Fn::GetAtt: [Investigations, Arn]
-              - Effect: Allow
+              - Sid: PublishTraces
+                Effect: Allow
                 Action:
                   - xray:PutTraceSegments
                   - xray:PutTelemetryRecords
                 Resource: '*'
-              - Effect: Allow
+              - Sid: RunApprovedModels
+                Effect: Allow
                 Action: bedrock-mantle:CreateInference
                 Resource:
                   Fn::Sub: arn:aws:bedrock-mantle:${AWS::Region}:${AWS::AccountId}:project/default
@@ -241,21 +342,25 @@ Resources:
                       - openai.gpt-6-luna
                       - minimax.minimax-m2.5
                     bedrock-mantle:ServiceTier: default
-              - Effect: Allow
+              - Sid: ReadRuntimeSettings
+                Effect: Allow
                 Action: ssm:GetParameter
                 Resource:
                   Fn::Sub: arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/switchboard/live/runtime
-              - Effect: Allow
+              - Sid: CompleteWorkflowTasks
+                Effect: Allow
                 Action:
                   - states:SendTaskSuccess
                   - states:SendTaskFailure
                 Resource: '*'
-              - Effect: Allow
+              - Sid: ReadDeepSeekKey
+                Effect: Allow
                 Action: ssm:GetParameter
                 Resource:
                   Fn::Sub:
                     arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/switchboard/live/deepseek-api-key
-              - Effect: Allow
+              - Sid: DecryptDeepSeekKeyThroughSSM
+                Effect: Allow
                 Action: kms:Decrypt
                 Resource: '*'
                 Condition:
@@ -265,6 +370,7 @@ Resources:
                     kms:EncryptionContext:PARAMETER_ARN:
                       Fn::Sub:
                         arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/switchboard/live/deepseek-api-key
+
   Worker:
     Type: AWS::Serverless::Function
     Properties:
@@ -323,11 +429,14 @@ Resources:
       AutoPublishAliasAllProperties: true
     Metadata:
       BuildMethod: python-uv
+
+  # Website runtime and permissions.
   WebsiteLogs:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /aws/lambda/switchboard-website
       RetentionInDays: 7
+
   WebsiteRole:
     Type: AWS::IAM::Role
     Properties:
@@ -344,18 +453,21 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              - Effect: Allow
+              - Sid: WriteFunctionLogs
+                Effect: Allow
                 Action:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource:
                   Fn::Sub:
                     arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/switchboard-website:*
-              - Effect: Allow
+              - Sid: PublishTraces
+                Effect: Allow
                 Action:
                   - xray:PutTraceSegments
                   - xray:PutTelemetryRecords
                 Resource: '*'
+
   Website:
     Type: AWS::Serverless::Function
     Properties:
@@ -395,6 +507,8 @@ Resources:
       AutoPublishAliasAllProperties: true
     Metadata:
       BuildMethod: makefile
+
+  # Scheduled maintenance permissions.
   SchedulerRole:
     Type: AWS::IAM::Role
     Properties:
@@ -418,16 +532,20 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              - Effect: Allow
+              - Sid: InvokeMaintenance
+                Effect: Allow
                 Action: lambda:InvokeFunction
                 Resource:
                   Fn::Sub: ${API.Arn}:live
+
+  # GitHub deployment identity and permissions.
   GitHubOIDC:
     Type: AWS::IAM::OIDCProvider
     Properties:
       Url: https://token.actions.githubusercontent.com
       ClientIdList:
         - sts.amazonaws.com
+
   DeploymentRole:
     Type: AWS::IAM::Role
     Properties:
@@ -450,7 +568,8 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              - Effect: Allow
+              - Sid: ReleaseFunctions
+                Effect: Allow
                 Action:
                   - lambda:GetFunction
                   - lambda:GetFunctionConfiguration
@@ -482,7 +601,8 @@ Resources:
                   - Fn::Sub: arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:switchboard-website:*
                   - Fn::Sub: arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:switchboard-receiver
                   - Fn::Sub: arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:switchboard-receiver:*
-              - Effect: Allow
+              - Sid: UpdateStackThroughChangeSets
+                Effect: Allow
                 Action:
                   - cloudformation:DescribeStacks
                   - cloudformation:UpdateStack
@@ -497,16 +617,19 @@ Resources:
                   - Ref: AWS::StackId
                   - Fn::Sub:
                       arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:changeSet/samcli-deploy*/*
-              - Effect: Allow
+              - Sid: UseTemplateTransforms
+                Effect: Allow
                 Action: cloudformation:CreateChangeSet
                 Resource:
                   - Fn::Sub: arn:aws:cloudformation:${AWS::Region}:aws:transform/LanguageExtensions
                   - Fn::Sub: arn:aws:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31
-              - Effect: Allow
+              - Sid: ReadRuntimeRoles
+                Effect: Allow
                 Action: iam:GetRole
                 Resource:
                   Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/switchboard-*
-              - Effect: Allow
+              - Sid: UpdateDeliveryDistribution
+                Effect: Allow
                 Action:
                   - cloudfront:GetDistribution
                   - cloudfront:GetDistributionConfig
@@ -514,43 +637,51 @@ Resources:
                   - cloudfront:UpdateDistribution
                 Resource:
                   Fn::Sub: arn:aws:cloudfront::${AWS::AccountId}:distribution/${Delivery}
-              - Effect: Allow
+              - Sid: ReadWebsiteCertificate
+                Effect: Allow
                 Action:
                   - acm:DescribeCertificate
                   - acm:ListTagsForCertificate
                 Resource:
                   Ref: WebsiteCertificate
-              - Effect: Allow
+              - Sid: ReadDeliveryPlan
+                Effect: Allow
                 Action: pricingplanmanager:GetSubscription
                 Resource: '*'
-              - Effect: Allow
+              - Sid: InspectDatabase
+                Effect: Allow
                 Action: dynamodb:DescribeTable
                 Resource:
                   Fn::GetAtt: [Database, Arn]
-              - Effect: Allow
+              - Sid: InspectQueues
+                Effect: Allow
                 Action: sqs:GetQueueAttributes
                 Resource:
                   - Fn::GetAtt: [Investigations, Arn]
                   - Fn::GetAtt: [DeadLetters, Arn]
-              - Effect: Allow
+              - Sid: InspectFirewall
+                Effect: Allow
                 Action:
                   - wafv2:GetWebACL
                   - wafv2:ListTagsForResource
                 Resource:
                   Fn::GetAtt: [Firewall, Arn]
-              - Effect: Allow
+              - Sid: ReadRuntimeLayers
+                Effect: Allow
                 Action: lambda:GetLayerVersion
                 Resource:
                   - arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerX86:30
                   - arn:aws:lambda:us-east-1:901920570463:layer:aws-otel-python-amd64-ver-1-32-0:7
-              - Effect: Allow
+              - Sid: ListFunctionAliases
+                Effect: Allow
                 Action: lambda:ListAliases
                 Resource:
-                  - Fn::Sub: ${API.Arn}
-                  - Fn::Sub: ${Worker.Arn}
-                  - Fn::Sub: ${Website.Arn}
-                  - Fn::Sub: ${Receiver.Arn}
-              - Effect: Allow
+                  - Fn::GetAtt: [API, Arn]
+                  - Fn::GetAtt: [Worker, Arn]
+                  - Fn::GetAtt: [Website, Arn]
+                  - Fn::GetAtt: [Receiver, Arn]
+              - Sid: PassRuntimeRolesToLambda
+                Effect: Allow
                 Action: iam:PassRole
                 Resource:
                   - Fn::GetAtt: [APIRole, Arn]
@@ -560,33 +691,41 @@ Resources:
                 Condition:
                   StringEquals:
                     iam:PassedToService: lambda.amazonaws.com
-              - Effect: Allow
+              - Sid: DeleteFunctionVersions
+                Effect: Allow
                 Action: lambda:DeleteFunction
                 Resource:
                   - Fn::Sub: ${API.Arn}:*
                   - Fn::Sub: ${Worker.Arn}:*
                   - Fn::Sub: ${Website.Arn}:*
                   - Fn::Sub: ${Receiver.Arn}:*
-              - Effect: Allow
+              - Sid: InspectLambdaCapacity
+                Effect: Allow
                 Action: lambda:GetAccountSettings
                 Resource: '*'
-              - Effect: Allow
+              - Sid: InspectDeploymentBucket
+                Effect: Allow
                 Action: ['s3:ListBucket', 's3:GetBucketLocation']
                 Resource:
                   Fn::GetAtt: [DeploymentArtifacts, Arn]
-              - Effect: Allow
+              - Sid: ManageDeploymentArtifacts
+                Effect: Allow
                 Action: ['s3:GetObject', 's3:GetObjectVersion', 's3:PutObject', 's3:AbortMultipartUpload']
                 Resource:
                   Fn::Sub: ${DeploymentArtifacts.Arn}/*
-              - Effect: Allow
+              - Sid: ReadRuntimeRolePolicies
+                Effect: Allow
                 Action: ['iam:GetRolePolicy']
                 Resource:
                   Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/switchboard-*
+
+  # Operational alerts, metrics, and dashboard.
   Alerts:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: switchboard-alerts
       DisplayName: Switchboard operational alerts
+
   AlertSubscription:
     Type: AWS::SNS::Subscription
     Condition: HasAlertEmail
@@ -596,6 +735,7 @@ Resources:
       Protocol: email
       Endpoint:
         Ref: AlertEmail
+
   APIErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -615,6 +755,7 @@ Resources:
       Dimensions:
         - Name: FunctionName
           Value: switchboard-api
+
   WorkerErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -634,6 +775,7 @@ Resources:
       Dimensions:
         - Name: FunctionName
           Value: switchboard-worker
+
   WebsiteErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -653,6 +795,7 @@ Resources:
       Dimensions:
         - Name: FunctionName
           Value: switchboard-website
+
   QueueBacklogAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -672,6 +815,7 @@ Resources:
       Dimensions:
         - Name: QueueName
           Value: switchboard-investigations
+
   DeadLetterJobsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -691,6 +835,7 @@ Resources:
       Dimensions:
         - Name: QueueName
           Value: switchboard-failed
+
   RejectedJobsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -708,6 +853,7 @@ Resources:
       TreatMissingData: notBreaching
       AlarmActions:
         - Ref: AlarmEvents
+
   FailedJobsMetric:
     Type: AWS::Logs::MetricFilter
     Properties:
@@ -720,6 +866,7 @@ Resources:
           MetricValue: '1'
           DefaultValue: 0
           Unit: Count
+
   Dashboard:
     Type: AWS::CloudWatch::Dashboard
     Properties:
@@ -837,6 +984,7 @@ Resources:
                   - [AWS/States, ExecutionsSucceeded, StateMachineArn, {Ref: Workflow}]
                   - [AWS/States, ExecutionsFailed, StateMachineArn, {Ref: Workflow}]
                   - [AWS/States, ExecutionsTimedOut, StateMachineArn, {Ref: Workflow}]
+
   AlertsPolicy:
     Type: AWS::SNS::TopicPolicy
     Properties:
@@ -858,17 +1006,20 @@ Resources:
               ArnLike:
                 aws:SourceArn:
                   Fn::Sub: arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:switchboard-*
+
+  # Protected function URLs and event sources.
   APIUrl:
     Type: AWS::Lambda::Url
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
       TargetFunctionArn:
-        Fn::Sub: ${API.Arn}
+        Fn::GetAtt: [API, Arn]
       Qualifier: live
       AuthType: AWS_IAM
       InvokeMode: BUFFERED
     DependsOn: APIAliaslive
+
   APIUrlPermission:
     Type: AWS::Lambda::Permission
     DeletionPolicy: Retain
@@ -882,6 +1033,7 @@ Resources:
         Fn::Sub: arn:aws:cloudfront::${AWS::AccountId}:distribution/${Delivery}
       FunctionUrlAuthType: AWS_IAM
     DependsOn: APIAliaslive
+
   APIInvokePermission:
     Type: AWS::Lambda::Permission
     DeletionPolicy: Retain
@@ -895,17 +1047,19 @@ Resources:
         Fn::Sub: arn:aws:cloudfront::${AWS::AccountId}:distribution/${Delivery}
       InvokedViaFunctionUrl: true
     DependsOn: APIAliaslive
+
   WebsiteUrl:
     Type: AWS::Lambda::Url
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
       TargetFunctionArn:
-        Fn::Sub: ${Website.Arn}
+        Fn::GetAtt: [Website, Arn]
       Qualifier: live
       AuthType: AWS_IAM
       InvokeMode: BUFFERED
     DependsOn: WebsiteAliaslive
+
   WebsiteUrlPermission:
     Type: AWS::Lambda::Permission
     DeletionPolicy: Retain
@@ -919,6 +1073,7 @@ Resources:
         Fn::Sub: arn:aws:cloudfront::${AWS::AccountId}:distribution/${Delivery}
       FunctionUrlAuthType: AWS_IAM
     DependsOn: WebsiteAliaslive
+
   WebsiteInvokePermission:
     Type: AWS::Lambda::Permission
     DeletionPolicy: Retain
@@ -932,6 +1087,7 @@ Resources:
         Fn::Sub: arn:aws:cloudfront::${AWS::AccountId}:distribution/${Delivery}
       InvokedViaFunctionUrl: true
     DependsOn: WebsiteAliaslive
+
   WorkerQueue:
     Type: AWS::Lambda::EventSourceMapping
     DeletionPolicy: Retain
@@ -947,6 +1103,7 @@ Resources:
       ScalingConfig:
         MaximumConcurrency: 2
     DependsOn: WorkerAliaslive
+
   Maintenance:
     Type: AWS::Scheduler::Schedule
     DeletionPolicy: Retain
@@ -969,6 +1126,8 @@ Resources:
         RoleArn:
           Fn::GetAtt: [SchedulerRole, Arn]
     DependsOn: APIAliaslive
+
+  # Public delivery, firewall, and certificate.
   OriginAccess:
     Type: AWS::CloudFront::OriginAccessControl
     DeletionPolicy: Retain
@@ -980,6 +1139,7 @@ Resources:
         SigningProtocol: sigv4
         SigningBehavior: always
         OriginAccessControlOriginType: lambda
+
   Firewall:
     Type: AWS::WAFv2::WebACL
     DeletionPolicy: Retain
@@ -1007,12 +1167,14 @@ Resources:
         CloudWatchMetricsEnabled: false
         MetricName: switchboard
       Scope: CLOUDFRONT
+
   WebsiteCertificate:
     Type: AWS::CertificateManager::Certificate
     Properties:
       DomainName: switchboard.hanifcarroll.com
       ValidationMethod: DNS
       CertificateExport: DISABLED
+
   Delivery:
     Type: AWS::CloudFront::Distribution
     DeletionPolicy: Retain
@@ -1077,7 +1239,9 @@ Resources:
           LambdaFunctionAssociations: []
           FunctionAssociations: []
           FieldLevelEncryptionId: ''
+          # AWS managed CachingDisabled: forward each request to the origin.
           CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          # AWS managed AllViewerExceptHostHeader: use the Lambda origin host.
           OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
           GrpcConfig:
             Enabled: false
@@ -1103,7 +1267,9 @@ Resources:
             LambdaFunctionAssociations: []
             FunctionAssociations: []
             FieldLevelEncryptionId: ''
+            # AWS managed CachingDisabled: forward each request to the origin.
             CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            # AWS managed AllViewerExceptHostHeader: use the Lambda origin host.
             OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
             GrpcConfig:
               Enabled: false
@@ -1124,7 +1290,9 @@ Resources:
             LambdaFunctionAssociations: []
             FunctionAssociations: []
             FieldLevelEncryptionId: ''
+            # AWS managed CachingOptimized: cache versioned Next.js assets.
             CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+            # AWS managed AllViewerExceptHostHeader: use the Lambda origin host.
             OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
             GrpcConfig:
               Enabled: false
@@ -1146,6 +1314,7 @@ Resources:
           Fn::GetAtt: [Firewall, Arn]
         HttpVersion: http2
         IPV6Enabled: true
+
   DeliveryPlan:
     Type: AWS::PricingPlanManager::Subscription
     DeletionPolicy: Retain
@@ -1156,11 +1325,14 @@ Resources:
       ResourceArns:
         - Fn::Sub: arn:aws:cloudfront::${AWS::AccountId}:distribution/${Delivery}
         - Fn::GetAtt: [Firewall, Arn]
+
+  # Signed webhook receiver runtime and permissions.
   ReceiverLogs:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /aws/lambda/switchboard-receiver
       RetentionInDays: 7
+
   ReceiverRole:
     Type: AWS::IAM::Role
     Properties:
@@ -1177,14 +1349,16 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              - Effect: Allow
+              - Sid: WriteFunctionLogs
+                Effect: Allow
                 Action:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource:
                   Fn::Sub:
                     arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/switchboard-receiver:*
-              - Effect: Allow
+              - Sid: ReadAndSaveDeliveryReceipts
+                Effect: Allow
                 Action:
                   - dynamodb:GetItem
                   - dynamodb:PutItem
@@ -1194,11 +1368,13 @@ Resources:
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
                       - WS#*#GEN#*
-              - Effect: Allow
+              - Sid: PublishTraces
+                Effect: Allow
                 Action:
                   - xray:PutTraceSegments
                   - xray:PutTelemetryRecords
                 Resource: '*'
+
   Receiver:
     Type: AWS::Serverless::Function
     Properties:
@@ -1244,6 +1420,7 @@ Resources:
       AutoPublishAliasAllProperties: true
     Metadata:
       BuildMethod: python-uv
+
   ReceiverUrl:
     Type: AWS::Lambda::Url
     DependsOn: ReceiverAliaslive
@@ -1253,6 +1430,8 @@ Resources:
       Qualifier: live
       AuthType: AWS_IAM
       InvokeMode: BUFFERED
+
+  # Change workflow and runtime configuration.
   WorkflowRole:
     Type: AWS::IAM::Role
     Properties:
@@ -1277,21 +1456,25 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              - Effect: Allow
+              - Sid: InvokeWorkflowOperations
+                Effect: Allow
                 Action: lambda:InvokeFunction
                 Resource:
                   Fn::Sub: ${API.Arn}:live
-              - Effect: Allow
+              - Sid: QueueInvestigations
+                Effect: Allow
                 Action: sqs:SendMessage
                 Resource:
                   Fn::GetAtt: [Investigations, Arn]
-              - Effect: Allow
+              - Sid: PublishAndSampleTraces
+                Effect: Allow
                 Action:
                   - xray:PutTraceSegments
                   - xray:PutTelemetryRecords
                   - xray:GetSamplingRules
                   - xray:GetSamplingTargets
                 Resource: '*'
+
   Workflow:
     Type: AWS::StepFunctions::StateMachine
     Properties:
@@ -1452,6 +1635,7 @@ Resources:
                 BackoffRate: 2
             Next: ReviewDelivery
     DependsOn: APIAliaslive
+
   RuntimeSettings:
     Type: AWS::SSM::Parameter
     Properties:
@@ -1460,12 +1644,13 @@ Resources:
       Tier: Standard
       Description: Controlled receiver and change workflow addresses
       Value:
-        Fn::Sub:
-          - '{"receiver_url":"${ReceiverURL}","state_machine_arn":"${WorkflowARN}"}'
-          - ReceiverURL:
-              Fn::GetAtt: [ReceiverUrl, FunctionUrl]
-            WorkflowARN:
-              Ref: Workflow
+        Fn::ToJsonString:
+          receiver_url:
+            Fn::GetAtt: [ReceiverUrl, FunctionUrl]
+          state_machine_arn:
+            Ref: Workflow
+
+  # Receiver and workflow alarms.
   ReceiverErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -1486,6 +1671,7 @@ Resources:
       Dimensions:
         - Name: FunctionName
           Value: switchboard-receiver
+
   WorkflowFailuresAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -1507,6 +1693,7 @@ Resources:
         - Name: StateMachineArn
           Value:
             Ref: Workflow
+
   WorkflowTimeoutsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -1527,15 +1714,19 @@ Resources:
         - Name: StateMachineArn
           Value:
             Ref: Workflow
+
+  # Readable email notification delivery.
   AlarmEvents:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: switchboard-alarm-events
+
   NotificationLogs:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /aws/lambda/switchboard-notifications
       RetentionInDays: 7
+
   NotificationRole:
     Type: AWS::IAM::Role
     Properties:
@@ -1552,22 +1743,26 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              - Effect: Allow
+              - Sid: WriteFunctionLogs
+                Effect: Allow
                 Action:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource:
                   Fn::Sub:
                     arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/switchboard-notifications:*
-              - Effect: Allow
+              - Sid: PublishAlertEmails
+                Effect: Allow
                 Action: sns:Publish
                 Resource:
                   Ref: Alerts
-              - Effect: Allow
+              - Sid: PublishTraces
+                Effect: Allow
                 Action:
                   - xray:PutTraceSegments
                   - xray:PutTelemetryRecords
                 Resource: '*'
+
   Notifications:
     Type: AWS::Lambda::Function
     Properties:
@@ -1664,6 +1859,7 @@ Resources:
           - ConcurrencyReservations
           - 1
           - Ref: AWS::NoValue
+
   NotificationPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -1675,6 +1871,7 @@ Resources:
         Ref: AlarmEvents
       SourceAccount:
         Ref: AWS::AccountId
+
   NotificationSubscription:
     Type: AWS::SNS::Subscription
     DependsOn: NotificationPermission
@@ -1684,6 +1881,8 @@ Resources:
       Protocol: lambda
       Endpoint:
         Fn::GetAtt: [Notifications, Arn]
+
+  # Account capacity alarm.
   ThrottlesAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -1700,6 +1899,8 @@ Resources:
       TreatMissingData: notBreaching
       AlarmActions:
         - Ref: AlarmEvents
+
+  # Deployment artifact storage.
   DeploymentArtifacts:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
@@ -1724,6 +1925,7 @@ Resources:
             Status: Enabled
             AbortIncompleteMultipartUpload:
               DaysAfterInitiation: 1
+
   DeploymentArtifactsPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
@@ -1741,119 +1943,75 @@ Resources:
             Condition:
               Bool:
                 aws:SecureTransport: 'false'
+
 Outputs:
+  # Storage and investigation queues.
   Database:
     Value:
       Ref: Database
+
   Investigations:
     Value:
       Ref: Investigations
+
   DeadLetters:
     Value:
       Ref: DeadLetters
+
   APIArn:
     Value:
       Fn::GetAtt: [API, Arn]
+
   WorkerArn:
     Value:
       Fn::GetAtt: [Worker, Arn]
+
   WebsiteArn:
     Value:
       Fn::GetAtt: [Website, Arn]
+
   SchedulerRoleArn:
     Value:
       Fn::GetAtt: [SchedulerRole, Arn]
+
   DeploymentRoleArn:
     Value:
       Fn::GetAtt: [DeploymentRole, Arn]
+
   AlertsArn:
     Value:
       Ref: Alerts
+
   ReceiverArn:
     Value:
       Fn::GetAtt: [Receiver, Arn]
+
   ReceiverURL:
     Value:
       Fn::GetAtt: [ReceiverUrl, FunctionUrl]
+
   WorkflowArn:
     Value:
       Ref: Workflow
+
   RuntimeParameter:
     Value:
       Ref: RuntimeSettings
+
   ModelKeyParameter:
     Value: /switchboard/live/deepseek-api-key
+
   DeliveryURL:
     Value: https://switchboard.hanifcarroll.com
+
   DeliveryId:
     Value:
       Ref: Delivery
+
   DeliveryPlanArn:
     Value:
       Fn::GetAtt: [DeliveryPlan, Arn]
+
   DeploymentBucket:
     Value:
       Ref: DeploymentArtifacts
-Parameters:
-  AlertEmail:
-    Type: String
-    Default: ''
-    Description: Email recipient for operational alerts; SNS confirmation is required.
-  ModelProvider:
-    Type: String
-    Default: bedrock
-    AllowedValues:
-      - deepseek
-      - bedrock
-    Description: Investigation worker model provider.
-  BedrockModel:
-    Type: String
-    Default: minimax.minimax-m2.5
-    AllowedValues:
-      - deepseek.v3.2
-      - openai.gpt-6-luna
-      - minimax.minimax-m2.5
-    Description: Model used when ModelProvider is bedrock.
-  DailyJobLimit:
-    Type: Number
-    Default: 100
-    MinValue: 1
-    MaxValue: 1000
-    Description: Maximum new demo investigations per UTC day.
-  VisitorDailyJobLimit:
-    Type: Number
-    Default: 10
-    MinValue: 1
-    MaxValue: 1000
-    Description: Maximum new investigations per visitor per UTC day.
-  ReserveConcurrency:
-    Type: String
-    Default: disabled
-    AllowedValues:
-      - enabled
-      - disabled
-    Description: Enable function reservations after raising the Lambda quota.
-  SubmissionWindowLimit:
-    Type: Number
-    Default: 20
-    MinValue: 1
-    MaxValue: 1000
-    Description: Maximum new demo investigations per five-minute UTC window.
-Conditions:
-  HasAlertEmail:
-    Fn::Not:
-      - Fn::Equals:
-          - Ref: AlertEmail
-          - ''
-  DirectModel:
-    Fn::Equals:
-      - Ref: ModelProvider
-      - deepseek
-  BedrockModelEnabled:
-    Fn::Equals:
-      - Ref: ModelProvider
-      - bedrock
-  ConcurrencyReservations:
-    Fn::Equals:
-      - Ref: ReserveConcurrency
-      - enabled

@@ -609,6 +609,7 @@ Resources:
                   - cloudformation:GetStackPolicy
                   - cloudformation:ListChangeSets
                   - cloudformation:DetectStackDrift
+                  - cloudformation:DetectStackResourceDrift
                   - cloudformation:DescribeStackResourceDrifts
                   - cloudformation:UpdateStack
                   - cloudformation:GetTemplate

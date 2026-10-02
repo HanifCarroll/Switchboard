@@ -147,6 +147,8 @@ def build(session):
 
 
 def prepare_change_set(session, template, parameters=None):
+
+    # 1. Record existing change sets and prepare SAM's deployment arguments.
     client = session.client("cloudformation")
     previous_ids = change_set_ids(client)
     arguments = [
@@ -164,11 +166,14 @@ def prepare_change_set(session, template, parameters=None):
                 *[f"{key}={value}" for key, value in parameters.items()],
             ]
         )
+
+    # 2. Create a change set without execution and identify only the new result.
     sam(arguments, session)
     created_ids = change_set_ids(client) - previous_ids
     if len(created_ids) != 1:
         raise DeploymentBlocked("Cannot identify a unique SAM change set.")
 
+    # 3. Accept a confirmed empty update or require a completed change set.
     change_set_id = created_ids.pop()
     result = client.describe_change_set(ChangeSetName=change_set_id)
     if result["Status"] == "FAILED":
@@ -230,7 +235,7 @@ def release(session, model_provider=None, bedrock_model=None, alert_email=None):
     if alert_email is not None:
         changes["AlertEmail"] = alert_email
 
-    # 2. Let SAM package the code and CloudFormation publish the live aliases.
+    # 2. Check stack protection and drift before deploying a reviewed change set.
     receipt = {"status": "pending", "rolled_back": False}
     try:
         check_stack(session)

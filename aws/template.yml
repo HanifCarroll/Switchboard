@@ -637,6 +637,13 @@ Resources:
                   - cloudfront:UpdateDistribution
                 Resource:
                   Fn::Sub: arn:aws:cloudfront::${AWS::AccountId}:distribution/${Delivery}
+              - Sid: UpdateOperationalDashboard
+                Effect: Allow
+                Action:
+                  - cloudwatch:GetDashboard
+                  - cloudwatch:PutDashboard
+                Resource:
+                  Fn::Sub: arn:aws:cloudwatch::${AWS::AccountId}:dashboard/switchboard
               - Sid: ReadWebsiteCertificate
                 Effect: Allow
                 Action:

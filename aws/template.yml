@@ -574,6 +574,7 @@ Resources:
                   - lambda:GetFunction
                   - lambda:GetFunctionConfiguration
                   - lambda:GetFunctionUrlConfig
+                  - lambda:GetPolicy
                   - lambda:UpdateFunctionConfiguration
                   - lambda:UpdateFunctionCode
                   - lambda:PublishVersion
@@ -737,6 +738,7 @@ Resources:
                 Effect: Allow
                 Action:
                   - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
                   - iam:GetOpenIDConnectProvider
                   - logs:DescribeMetricFilters
                   - logs:ListTagsForResource
@@ -761,6 +763,7 @@ Resources:
                   - s3:GetBucketPolicy
                   - s3:GetBucketTagging
                   - dynamodb:DescribeContinuousBackups
+                  - cloudwatch:ListTagsForResource
                 Resource:
                   - Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/switchboard-*
                   - Ref: GitHubOIDC
@@ -778,11 +781,13 @@ Resources:
                   - Fn::GetAtt: [Database, Arn]
                   - Fn::GetAtt: [Investigations, Arn]
                   - Fn::GetAtt: [DeadLetters, Arn]
+                  - Fn::Sub: arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:switchboard-*
               - Sid: ListLogsAndAlarmsForDrift
                 Effect: Allow
                 Action:
                   - logs:DescribeLogGroups
                   - cloudwatch:DescribeAlarms
+                  - ssm:DescribeParameters
                 Resource: '*'
               - Sid: TagStackResources
                 Effect: Allow

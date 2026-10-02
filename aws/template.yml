@@ -499,7 +499,7 @@ Resources:
       ReservedConcurrentExecutions:
         Fn::If:
           - ConcurrencyReservations
-          - 6
+          - 100
           - Ref: AWS::NoValue
       Tracing: Active
       CodeUri: ../frontend/

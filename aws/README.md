@@ -105,7 +105,7 @@ Local development uses Amazon's official [DynamoDB Local](https://docs.aws.amazo
 
 ## Monitoring and alerts
 
-The regional Lambda quota must leave at least 100 executions unreserved. Once the quota supports it, the next application release preserves stack-owned reservations: API 8, website 6, worker 5, receiver 2, and notifications 1. The SQS worker still processes only two messages concurrently. For a new account with a lower quota, set `ReserveConcurrency=disabled` until a Service Quotas increase is approved. Reserved concurrency allocates and caps capacity; it does not keep instances running.
+The regional Lambda quota must leave at least 100 executions unreserved. Once the quota supports it, the next application release preserves stack-owned reservations: API 8, website 100, worker 5, receiver 2, and notifications 1. The SQS worker still processes only two messages concurrently. For a new account with a lower quota, set `ReserveConcurrency=disabled` until a Service Quotas increase is approved. Reserved concurrency allocates and caps capacity; it does not keep instances running.
 
 Open the `switchboard` CloudWatch dashboard in `us-east-1`. Ten standard alarms publish to the internal `switchboard-alarm-events` topic. A Lambda formats a clear subject, plain-language explanation, UTC timestamp, and investigation links, then publishes to `switchboard-alerts` for the existing email subscription. Raw metric payloads remain in CloudWatch:
 

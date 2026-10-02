@@ -44,6 +44,16 @@ sam deploy --config-file "$PWD/samconfig.toml" --resolve-s3 --profile hc-studio
 
 ## Deployment checks and rollback
 
+Releases require a fresh, successful drift check and the checked-in stack policy, which blocks replacing or deleting `Database` while allowing ordinary updates. SAM first creates a change set without executing it. The helper inspects every page, rejects definite or conditional replacements and resource removals, then executes that exact change set. Removing retired SAM Lambda versions is allowed. A blocked preflight leaves the running stack untouched and does not attempt rollback.
+
+Install the database protection with the administrator profile before the first guarded release:
+
+```sh
+aws cloudformation set-stack-policy --stack-name switchboard --stack-policy-body file://aws/stack-policy.json --profile hc-studio --region us-east-1
+```
+
+Run that command from the repository root. The deployment role can read the policy but cannot change it. Drift detection checks only supported resources and properties; it does not verify Lambda source code. Review drift or blocked replacements through an administrator-led change rather than disabling the release checks. SAM stack tags identify `Application=Switchboard`, `Environment=demo`, and `Owner=HanifCarroll`; AWS propagates them to supported resources.
+
 Each release checks the live website, a JavaScript bundle, demo identity, and database-backed persona data. Checks retry transient failures. A failed deployment or health check redeploys the previous template and all its saved runtime parameters through SAM, then checks the restored application. The release remains failed even when recovery succeeds.
 
 ```sh
@@ -51,7 +61,7 @@ uv run python ../scripts/aws.py check --profile hc-studio
 uv run python ../scripts/aws.py rollback --profile hc-studio
 ```
 
-The helper saves the previous deployable template to ignored `aws/local/previous-template.yml`, its parameters to `previous-deployment.json`, package sizes to `packaging.json`, and the deployment outcome to `deployment-health.json`. Keep those receipts before another release replaces them. A rollback may require a browser reload because an older website package cannot contain a future release's assets.
+The helper saves the previous deployable template to ignored `aws/local/previous-template.yml`, its parameters to `previous-deployment.json`, package sizes to `packaging.json`, the current drift result to `drift.json`, reviewed changes to `change-set.json`, and the deployment outcome to `deployment-health.json`. Keep those receipts before another release replaces them. A rollback may require a browser reload because an older website package cannot contain a future release's assets.
 
 ## GitHub Actions
 

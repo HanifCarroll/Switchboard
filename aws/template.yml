@@ -605,6 +605,10 @@ Resources:
                 Effect: Allow
                 Action:
                   - cloudformation:DescribeStacks
+                  - cloudformation:GetStackPolicy
+                  - cloudformation:ListChangeSets
+                  - cloudformation:DetectStackDrift
+                  - cloudformation:DescribeStackResourceDrifts
                   - cloudformation:UpdateStack
                   - cloudformation:GetTemplate
                   - cloudformation:DescribeStackEvents
@@ -725,6 +729,113 @@ Resources:
                 Action: ['iam:GetRolePolicy']
                 Resource:
                   Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/switchboard-*
+              - Sid: ReadDriftDetectionStatus
+                Effect: Allow
+                Action: cloudformation:DescribeStackDriftDetectionStatus
+                Resource: '*'
+              - Sid: InspectStackResourcesForDrift
+                Effect: Allow
+                Action:
+                  - iam:ListRolePolicies
+                  - iam:GetOpenIDConnectProvider
+                  - logs:DescribeMetricFilters
+                  - logs:ListTagsForResource
+                  - logs:ListTagsLogGroup
+                  - sns:GetTopicAttributes
+                  - sns:GetSubscriptionAttributes
+                  - sns:ListSubscriptionsByTopic
+                  - sns:ListTagsForResource
+                  - states:DescribeStateMachine
+                  - states:ListTagsForResource
+                  - ssm:GetParameter
+                  - ssm:ListTagsForResource
+                  - scheduler:GetSchedule
+                  - scheduler:ListTagsForResource
+                  - cloudfront:GetOriginAccessControl
+                  - sqs:ListQueueTags
+                  - dynamodb:ListTagsOfResource
+                  - s3:GetBucketPublicAccessBlock
+                  - s3:GetEncryptionConfiguration
+                  - s3:GetBucketVersioning
+                  - s3:GetLifecycleConfiguration
+                  - s3:GetBucketPolicy
+                  - s3:GetBucketTagging
+                  - dynamodb:DescribeContinuousBackups
+                Resource:
+                  - Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/switchboard-*
+                  - Ref: GitHubOIDC
+                  - Fn::Sub: arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/switchboard-*
+                  - Fn::Sub: arn:aws:cloudwatch::${AWS::AccountId}:dashboard/switchboard
+                  - Ref: Alerts
+                  - Ref: AlarmEvents
+                  - Fn::Sub: arn:aws:sns:${AWS::Region}:${AWS::AccountId}:switchboard-alerts:*
+                  - Fn::Sub: arn:aws:sns:${AWS::Region}:${AWS::AccountId}:switchboard-alarm-events:*
+                  - Fn::Sub: arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:switchboard-change-workflow
+                  - Fn::Sub: arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/switchboard/live/runtime
+                  - Fn::Sub: arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/switchboard-maintenance
+                  - Fn::Sub: arn:aws:cloudfront::${AWS::AccountId}:origin-access-control/${OriginAccess}
+                  - Fn::GetAtt: [DeploymentArtifacts, Arn]
+                  - Fn::GetAtt: [Database, Arn]
+                  - Fn::GetAtt: [Investigations, Arn]
+                  - Fn::GetAtt: [DeadLetters, Arn]
+              - Sid: ListLogsAndAlarmsForDrift
+                Effect: Allow
+                Action:
+                  - logs:DescribeLogGroups
+                  - cloudwatch:DescribeAlarms
+                Resource: '*'
+              - Sid: TagStackResources
+                Effect: Allow
+                Action:
+                  - lambda:TagResource
+                  - lambda:UntagResource
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:TagOpenIDConnectProvider
+                  - iam:UntagOpenIDConnectProvider
+                  - dynamodb:TagResource
+                  - dynamodb:UntagResource
+                  - sqs:TagQueue
+                  - sqs:UntagQueue
+                  - logs:TagResource
+                  - logs:UntagResource
+                  - sns:TagResource
+                  - sns:UntagResource
+                  - states:TagResource
+                  - states:UntagResource
+                  - ssm:AddTagsToResource
+                  - ssm:RemoveTagsFromResource
+                  - cloudfront:TagResource
+                  - cloudfront:UntagResource
+                  - wafv2:TagResource
+                  - wafv2:UntagResource
+                  - acm:AddTagsToCertificate
+                  - acm:RemoveTagsFromCertificate
+                  - s3:PutBucketTagging
+                  - cloudwatch:TagResource
+                  - cloudwatch:UntagResource
+                Resource:
+                  - Fn::Sub: arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:switchboard-*
+                  - Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/switchboard-*
+                  - Ref: GitHubOIDC
+                  - Fn::GetAtt: [Database, Arn]
+                  - Fn::GetAtt: [Investigations, Arn]
+                  - Fn::GetAtt: [DeadLetters, Arn]
+                  - Fn::Sub: arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/switchboard-*
+                  - Ref: Alerts
+                  - Ref: AlarmEvents
+                  - Fn::Sub: arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:switchboard-change-workflow
+                  - Fn::Sub: arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/switchboard/live/runtime
+                  - Fn::Sub: arn:aws:cloudfront::${AWS::AccountId}:distribution/${Delivery}
+                  - Fn::GetAtt: [Firewall, Arn]
+                  - Ref: WebsiteCertificate
+                  - Fn::GetAtt: [DeploymentArtifacts, Arn]
+                  - Fn::Sub: arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:switchboard-*
+              - Sid: InspectWorkerEventSourceForDrift
+                Effect: Allow
+                Action: lambda:GetEventSourceMapping
+                Resource:
+                  Fn::Sub: arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:event-source-mapping:${WorkerQueue}
 
   # Operational alerts, metrics, and dashboard.
   Alerts:

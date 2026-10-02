@@ -120,3 +120,5 @@ jobs:
             aws/local/previous-template.yml
             aws/local/previous-deployment.json
             aws/local/deployment-health.json
+            aws/local/drift.json
+            aws/local/change-set.json

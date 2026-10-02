@@ -14,6 +14,7 @@ capabilities = "CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
 s3_prefix = "releases"
 confirm_changeset = false
 fail_on_empty_changeset = false
+tags = "Application=Switchboard Environment=demo Owner=HanifCarroll"
 
 [default.validate.parameters]
 template_file = "aws/template.yml"

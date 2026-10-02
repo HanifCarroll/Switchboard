@@ -49,6 +49,7 @@ def test_sam_release_preserves_runtime_and_restores_previous_template(
     tmp_path, monkeypatch, health_fails
 ):
     monkeypatch.setattr(aws, "LOCAL", tmp_path)
+    monkeypatch.setattr(aws, "check_stack", Mock())
     session = Mock()
     client = session.client.return_value
     parameters = {
@@ -109,6 +110,7 @@ def test_sam_release_preserves_runtime_and_restores_previous_template(
 
 def test_failed_rollback_is_reported_and_release_stays_failed(tmp_path, monkeypatch):
     monkeypatch.setattr(aws, "LOCAL", tmp_path)
+    monkeypatch.setattr(aws, "check_stack", Mock())
     session = Mock()
     session.client.return_value.describe_stacks.return_value = {
         "Stacks": [{"Parameters": []}]
@@ -136,3 +138,141 @@ def test_sam_uses_root_configuration_for_nested_templates(monkeypatch):
         aws.ROOT / "samconfig.toml"
     )
     assert command[-2:] == ["--profile", "hc-studio"]
+
+
+@pytest.mark.parametrize(
+    "action,replacement,resource_type,blocked",
+    [
+        ("Modify", "True", "AWS::DynamoDB::Table", True),
+        ("Modify", "Conditional", "AWS::Lambda::Function", True),
+        ("Remove", None, "AWS::SQS::Queue", True),
+        ("Remove", None, "AWS::Lambda::Version", False),
+        ("Modify", "False", "AWS::Lambda::Function", False),
+    ],
+)
+def test_change_set_blocks_replacement_and_removal_before_execution(
+    tmp_path, monkeypatch, action, replacement, resource_type, blocked
+):
+    monkeypatch.setattr(aws, "LOCAL", tmp_path)
+    client = Mock()
+    client.get_paginator.return_value.paginate.return_value = [
+        {
+            "Changes": [
+                {
+                    "ResourceChange": {
+                        "LogicalResourceId": "Resource",
+                        "ResourceType": resource_type,
+                        "Action": action,
+                        "Replacement": replacement,
+                    }
+                }
+            ]
+        }
+    ]
+    if blocked:
+        with pytest.raises(aws.DeploymentBlocked):
+            aws.execute_checked_change_set(client, "change-set-id")
+        client.execute_change_set.assert_not_called()
+    else:
+        aws.execute_checked_change_set(client, "change-set-id")
+        client.execute_change_set.assert_called_once_with(ChangeSetName="change-set-id")
+        client.get_waiter.return_value.wait.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "detection_status,drift_status,blocked",
+    [
+        ("DETECTION_COMPLETE", "IN_SYNC", False),
+        ("DETECTION_COMPLETE", "DRIFTED", True),
+        ("DETECTION_FAILED", "IN_SYNC", True),
+    ],
+)
+def test_stack_preflight_requires_successful_current_drift_detection(
+    tmp_path, monkeypatch, detection_status, drift_status, blocked
+):
+    monkeypatch.setattr(aws, "LOCAL", tmp_path)
+    session = Mock()
+    client = session.client.return_value
+    client.get_stack_policy.return_value = {
+        "StackPolicyBody": (aws.ROOT / "aws" / "stack-policy.json").read_text()
+    }
+    client.detect_stack_drift.return_value = {"StackDriftDetectionId": "detection-id"}
+    client.describe_stack_drift_detection_status.return_value = {
+        "DetectionStatus": detection_status,
+        "StackDriftStatus": drift_status,
+    }
+    if blocked:
+        with pytest.raises(aws.DeploymentBlocked):
+            aws.check_stack(session)
+    else:
+        aws.check_stack(session)
+    client.detect_stack_drift.assert_called_once_with(StackName="switchboard")
+
+
+def test_blocked_release_does_not_roll_back_unexecuted_changes(tmp_path, monkeypatch):
+    monkeypatch.setattr(aws, "LOCAL", tmp_path)
+    session = Mock()
+    session.client.return_value.describe_stacks.return_value = {
+        "Stacks": [{"Parameters": []}]
+    }
+    session.client.return_value.get_template.return_value = {
+        "TemplateBody": {"Resources": {}}
+    }
+    monkeypatch.setattr(
+        aws, "check_stack", Mock(side_effect=aws.DeploymentBlocked("drift"))
+    )
+    deploy = Mock()
+    monkeypatch.setattr(aws, "deploy_template", deploy)
+    with pytest.raises(aws.DeploymentBlocked):
+        aws.release(session)
+    deploy.assert_not_called()
+    receipt = json.loads((tmp_path / "deployment-health.json").read_text())
+    assert receipt["status"] == "blocked" and receipt["rolled_back"] is False
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_sam_preparation_selects_only_the_new_change_set(monkeypatch, empty):
+    session = Mock()
+    client = session.client.return_value
+    old_id = "old-pending-change-set"
+    new_id = "new-change-set"
+    client.get_paginator.return_value.paginate.side_effect = [
+        [{"Summaries": [{"ChangeSetId": old_id}]}],
+        [{"Summaries": [{"ChangeSetId": old_id}, {"ChangeSetId": new_id}]}],
+    ]
+    client.describe_change_set.return_value = (
+        {
+            "Status": "FAILED",
+            "StatusReason": "The submitted information didn't contain changes.",
+        }
+        if empty
+        else {"Status": "CREATE_COMPLETE"}
+    )
+    monkeypatch.setattr(
+        aws, "outputs", lambda session: {"DeploymentBucket": "artifacts"}
+    )
+    sam = Mock()
+    monkeypatch.setattr(aws, "sam", sam)
+    result = aws.prepare_change_set(session, Path("template.yml"))
+    assert result == (None if empty else new_id)
+    assert "--no-execute-changeset" in sam.call_args.args[0]
+    client.execute_change_set.assert_not_called()
+
+
+def test_change_set_preparation_failure_is_blocked_before_execution(monkeypatch):
+    monkeypatch.setattr(
+        aws, "prepare_change_set", Mock(side_effect=RuntimeError("denied"))
+    )
+    session = Mock()
+    with pytest.raises(aws.DeploymentBlocked, match="denied"):
+        aws.deploy_template(session, Path("template.yml"))
+    session.client.assert_not_called()
+
+
+def test_missing_stack_policy_blocks_before_drift_detection(monkeypatch):
+    session = Mock()
+    client = session.client.return_value
+    client.get_stack_policy.return_value = {}
+    with pytest.raises(aws.DeploymentBlocked, match="stack-policy.json"):
+        aws.check_stack(session)
+    client.detect_stack_drift.assert_not_called()

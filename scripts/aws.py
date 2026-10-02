@@ -19,6 +19,96 @@ BUILD = ROOT / ".aws-sam" / "build"
 LOCAL = ROOT / "aws" / "local"
 
 
+class DeploymentBlocked(RuntimeError):
+    """A pre-deployment check rejected changes before execution."""
+
+
+def check_stack(session):
+    """Require database protection and a current, successful drift check."""
+
+    # 1. Verify the checked-in database protection is installed on the stack.
+    client = session.client("cloudformation")
+    expected = json.loads((ROOT / "aws" / "stack-policy.json").read_text())
+    response = client.get_stack_policy(StackName="switchboard")
+    installed = json.loads(response.get("StackPolicyBody", "{}"))
+    if installed != expected:
+        raise DeploymentBlocked("Install aws/stack-policy.json before releasing.")
+
+    # 2. Wait for a fresh drift result, failing closed on errors or timeout.
+    detection = client.detect_stack_drift(StackName="switchboard")
+    deadline = time.monotonic() + 300
+    while time.monotonic() < deadline:
+        result = client.describe_stack_drift_detection_status(
+            StackDriftDetectionId=detection["StackDriftDetectionId"]
+        )
+        if result["DetectionStatus"] != "DETECTION_IN_PROGRESS":
+            LOCAL.mkdir(parents=True, exist_ok=True)
+            (LOCAL / "drift.json").write_text(
+                json.dumps(result, indent=2, default=str) + "\n"
+            )
+            if (
+                result["DetectionStatus"] != "DETECTION_COMPLETE"
+                or result.get("StackDriftStatus") != "IN_SYNC"
+            ):
+                raise DeploymentBlocked("Stack drift check failed; inspect drift.json.")
+            return
+
+        time.sleep(5)
+
+    raise DeploymentBlocked("Stack drift detection exceeded five minutes.")
+
+
+def change_set_ids(client):
+    return {
+        change["ChangeSetId"]
+        for page in client.get_paginator("list_change_sets").paginate(
+            StackName="switchboard"
+        )
+        for change in page["Summaries"]
+    }
+
+
+def check_change_set(client, change_set_id):
+    """Reject replacements and removals, except retired SAM function versions."""
+
+    # 1. Save every page of the exact change set that will be executed.
+    changes = [
+        change["ResourceChange"]
+        for page in client.get_paginator("describe_change_set").paginate(
+            ChangeSetName=change_set_id, IncludePropertyValues=True
+        )
+        for change in page.get("Changes", [])
+    ]
+    LOCAL.mkdir(parents=True, exist_ok=True)
+    (LOCAL / "change-set.json").write_text(
+        json.dumps({"id": change_set_id, "changes": changes}, indent=2) + "\n"
+    )
+
+    # 2. Fail before execution when existing resources might be replaced or removed.
+    for change in changes:
+        removal = (
+            change["Action"] == "Remove"
+            and change["ResourceType"] != "AWS::Lambda::Version"
+        )
+        replacement = change.get("Replacement") in {"True", "Conditional"}
+        if removal or replacement:
+            raise DeploymentBlocked(
+                f"Unsafe change to {change['LogicalResourceId']}; inspect change-set.json."
+            )
+
+
+def execute_checked_change_set(client, change_set_id):
+    try:
+        check_change_set(client, change_set_id)
+    except Exception as error:
+        raise DeploymentBlocked(str(error)) from error
+
+    client.execute_change_set(ChangeSetName=change_set_id)
+    client.get_waiter("stack_update_complete").wait(
+        StackName="switchboard", WaiterConfig={"Delay": 5, "MaxAttempts": 120}
+    )
+
+
 def sam(arguments, session):
     command = ["sam", *arguments, "--config-file", str(ROOT / "samconfig.toml")]
     if session.profile_name and session.profile_name != "default":
@@ -56,13 +146,16 @@ def build(session):
     )
 
 
-def deploy_template(session, template, parameters=None):
+def prepare_change_set(session, template, parameters=None):
+    client = session.client("cloudformation")
+    previous_ids = change_set_ids(client)
     arguments = [
         "deploy",
         "--template-file",
         str(template),
         "--s3-bucket",
         outputs(session)["DeploymentBucket"],
+        "--no-execute-changeset",
     ]
     if parameters:
         arguments.extend(
@@ -72,6 +165,36 @@ def deploy_template(session, template, parameters=None):
             ]
         )
     sam(arguments, session)
+    created_ids = change_set_ids(client) - previous_ids
+    if len(created_ids) != 1:
+        raise DeploymentBlocked("Cannot identify a unique SAM change set.")
+
+    change_set_id = created_ids.pop()
+    result = client.describe_change_set(ChangeSetName=change_set_id)
+    if result["Status"] == "FAILED":
+        reason = result.get("StatusReason", "")
+        if (
+            "The submitted information didn't contain changes." in reason
+            or "No updates are to be performed" in reason
+        ):
+            return None
+
+        raise DeploymentBlocked(f"SAM change set failed: {reason}")
+
+    if result["Status"] != "CREATE_COMPLETE":
+        raise DeploymentBlocked("SAM change set is not ready for inspection.")
+
+    return change_set_id
+
+
+def deploy_template(session, template, parameters=None):
+    try:
+        change_set_id = prepare_change_set(session, template, parameters)
+    except Exception as error:
+        raise DeploymentBlocked(str(error)) from error
+
+    if change_set_id is not None:
+        execute_checked_change_set(session.client("cloudformation"), change_set_id)
 
 
 def rollback(session):
@@ -110,8 +233,23 @@ def release(session, model_provider=None, bedrock_model=None, alert_email=None):
     # 2. Let SAM package the code and CloudFormation publish the live aliases.
     receipt = {"status": "pending", "rolled_back": False}
     try:
+        check_stack(session)
+    except Exception as error:
+        receipt.update(status="blocked", reason=str(error))
+        (LOCAL / "deployment-health.json").write_text(
+            json.dumps(receipt, indent=2) + "\n"
+        )
+        raise DeploymentBlocked(str(error)) from error
+
+    try:
         deploy_template(session, BUILD / "template.yaml", changes)
         smoke_check(session)
+    except DeploymentBlocked as error:
+        receipt.update(status="blocked", reason=str(error))
+        (LOCAL / "deployment-health.json").write_text(
+            json.dumps(receipt, indent=2) + "\n"
+        )
+        raise
     except Exception as error:
         receipt.update(status="failed", reason=str(error))
         try:

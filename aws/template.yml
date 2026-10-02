@@ -742,6 +742,7 @@ Resources:
                   - iam:ListAttachedRolePolicies
                   - iam:GetOpenIDConnectProvider
                   - logs:DescribeMetricFilters
+                  - logs:DescribeIndexPolicies
                   - logs:ListTagsForResource
                   - logs:ListTagsLogGroup
                   - sns:GetTopicAttributes
@@ -751,6 +752,7 @@ Resources:
                   - states:DescribeStateMachine
                   - states:ListTagsForResource
                   - ssm:GetParameter
+                  - ssm:GetParameters
                   - ssm:ListTagsForResource
                   - scheduler:GetSchedule
                   - scheduler:ListTagsForResource
@@ -765,6 +767,8 @@ Resources:
                   - s3:GetBucketTagging
                   - dynamodb:DescribeContinuousBackups
                   - cloudwatch:ListTagsForResource
+                  - lambda:GetFunction
+                  - lambda:GetPolicy
                 Resource:
                   - Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/switchboard-*
                   - Ref: GitHubOIDC
@@ -783,6 +787,7 @@ Resources:
                   - Fn::GetAtt: [Investigations, Arn]
                   - Fn::GetAtt: [DeadLetters, Arn]
                   - Fn::Sub: arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:switchboard-*
+                  - Fn::GetAtt: [Notifications, Arn]
               - Sid: ListLogsAndAlarmsForDrift
                 Effect: Allow
                 Action:

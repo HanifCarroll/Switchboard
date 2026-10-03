@@ -25,7 +25,7 @@ SAM builds the Python functions directly from `uv.lock` using its native uv buil
 
 SAM publishes immutable function versions and selects them through each function's `live` alias. Every release builds the full application. Unchanged Python packages reuse their uploaded object. `AWS::LanguageExtensions` resolves parameter values before SAM generates versions, so a change to the model configuration also publishes a worker version. Model selection, alert recipients, and other existing stack parameters are preserved unless explicitly overridden. Always deploy the original SAM template with its parameter values, rather than reusing a previously processed template.
 
-The public demo uses MiniMax M2.5 through Amazon Bedrock with a 20,000-token completion budget. To select another supported model:
+The public demo uses MiniMax M2.5 through Amazon Bedrock with a 20,000-token completion budget for investigation and 25,000 tokens for policy review and findings revision. Worker deadlines and queue retry limits remain unchanged. A synthetic policy-review request verified acceptance of the review budget on the configured Mantle endpoint; see [architecture and reliability](../docs/architecture.md#investigation). To select another supported model:
 
 ```sh
 uv run python ../scripts/aws.py release --profile hc-studio \

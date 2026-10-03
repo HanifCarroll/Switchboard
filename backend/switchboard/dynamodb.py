@@ -6,7 +6,7 @@ import os
 import random
 import time
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from botocore.exceptions import ClientError
@@ -468,25 +468,40 @@ class DynamoStore:
             )
         self.transaction(workspace, operations, completion=True)
 
-    def save_checkpoint(self, workspace: str, result: dict):
+    def save_checkpoint(
+        self,
+        workspace: str,
+        result: dict,
+        *,
+        stage: Literal["draft", "validated"] = "validated",
+    ):
         if self.lease is None:
             return
-        manifest = self.chunk(workspace, f"CHECKPOINT#{self.lease['id']}", result)
+        prefix = "DRAFTCHECKPOINT" if stage == "draft" else "CHECKPOINT"
+        checkpoint_key = f"{prefix}#{self.lease['id']}"
+        manifest = self.chunk(workspace, checkpoint_key, result)
         self.transaction(
             workspace,
             [
                 self.put(
                     self.partition(workspace),
-                    f"CHECKPOINT#{self.lease['id']}",
+                    checkpoint_key,
                     manifest,
                 )
             ],
         )
 
-    def load_checkpoint(self, workspace: str) -> dict | None:
+    def load_checkpoint(
+        self,
+        workspace: str,
+        *,
+        stage: Literal["draft", "validated"] = "validated",
+    ) -> dict | None:
         if self.lease is None:
             return None
-        manifest = self.get(self.partition(workspace), f"CHECKPOINT#{self.lease['id']}")
+        prefix = "DRAFTCHECKPOINT" if stage == "draft" else "CHECKPOINT"
+        checkpoint_key = f"{prefix}#{self.lease['id']}"
+        manifest = self.get(self.partition(workspace), checkpoint_key)
         return self.hydrate(workspace, manifest) if manifest else None
 
     def load_run(self, workspace: str, run_id: str) -> dict | None:

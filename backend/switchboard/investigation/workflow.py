@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, NotRequired, TypedDict
@@ -22,6 +23,7 @@ from switchboard.investigation.tools import InvestigationContext, employee_sessi
 from switchboard.models import (
     EndpointChangeResult,
     EvidenceSnapshot,
+    InvestigationDraft,
     InvestigationResult,
     Proposal,
     ReportValidation,
@@ -58,37 +60,58 @@ class EndpointChangeWorkflowState(TypedDict):
 def investigate_request(
     state: EndpointChangeWorkflowState, runtime: Runtime[EndpointChangeContext]
 ):
-    # 1. Run the investigator; its tools expose only authorized read operations.
-    result = runtime.context.agent.invoke(
-        {"messages": [HumanMessage(content=state["request"])]},
-        context=runtime.context.investigation_context,
-        config={"recursion_limit": 12},
+    # 1. Resume only the private draft belonging to this workspace generation and job.
+    storage = runtime.context.investigation_context.storage
+    cached = (
+        storage.transport.load_checkpoint(storage.workspace_id, stage="draft")
+        if isinstance(storage.transport, DynamoStore)
+        else None
     )
 
-    # 2. Validate the answer and keep the selected ticket authoritative.
-    if "structured_response" in result:
-        investigation = InvestigationResult.model_validate(
-            result["structured_response"]
-        )
+    # 2. Resume the draft or run the investigator's authorized read-only tools.
+    if cached is not None:
+        draft = InvestigationDraft.model_validate_json(json.dumps(cached))
     else:
-        investigation = InvestigationResult.model_validate_json(
-            result["messages"][-1].text
+        result = runtime.context.agent.invoke(
+            {"messages": [HumanMessage(content=state["request"])]},
+            context=runtime.context.investigation_context,
+            config={"recursion_limit": 12},
         )
-    if (
-        investigation.ticket_id is not None
-        and investigation.ticket_id != state["ticket_id"]
+        if "structured_response" in result:
+            investigation = InvestigationResult.model_validate(
+                result["structured_response"]
+            )
+        else:
+            investigation = InvestigationResult.model_validate_json(
+                result["messages"][-1].text
+            )
+        draft = InvestigationDraft(
+            ticket_id=state["ticket_id"],
+            investigation=investigation,
+            evidence=capture_investigation_evidence(
+                messages=result["messages"],
+                captured_at=runtime.context.captured_at,
+            ),
+            messages=result["messages"],
+        )
+
+    # 3. Keep the selected ticket authoritative and fence every checkpoint write.
+    if draft.ticket_id != state["ticket_id"] or (
+        draft.investigation.ticket_id is not None
+        and draft.investigation.ticket_id != state["ticket_id"]
     ):
         raise ValueError("Investigation returned a different ticket")
+    if cached is None and isinstance(storage.transport, DynamoStore):
+        storage.transport.save_checkpoint(
+            storage.workspace_id, draft.model_dump(mode="json"), stage="draft"
+        )
 
-    evidence = capture_investigation_evidence(
-        messages=result["messages"],
-        captured_at=runtime.context.captured_at,
-    )
+    # 4. Both fresh and resumed drafts must pass the following policy-review node.
     return {
         "source": "model",
-        "investigation": investigation,
-        "evidence": evidence,
-        "messages": result["messages"],
+        "investigation": draft.investigation,
+        "evidence": draft.evidence,
+        "messages": draft.messages,
     }
 
 

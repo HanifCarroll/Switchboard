@@ -286,6 +286,15 @@ class ReportValidation(Record):
     revision_count: Annotated[int, Field(ge=0, le=1)]
 
 
+class InvestigationDraft(Record):
+    """Private retry checkpoint; policy review is still required before publication."""
+
+    ticket_id: Text
+    investigation: InvestigationResult
+    evidence: list[EvidenceSnapshot]
+    messages: list[AnyMessage]
+
+
 class EndpointChangeResult(Record):
     source: Literal["model", "fixture"]
     investigation: InvestigationResult

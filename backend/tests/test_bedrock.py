@@ -11,7 +11,7 @@ import pytest
 from botocore.credentials import ReadOnlyCredentials
 from langchain.agents.middleware import ModelRequest
 from langchain.agents.structured_output import ProviderStrategy
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from openai import PermissionDeniedError
 from pydantic import SecretStr
@@ -20,7 +20,10 @@ from switchboard.investigation import bedrock
 from switchboard.investigation.agent import check_investigation_deadline, create_model
 from switchboard.investigation.bedrock import HOST, BedrockSigV4Auth
 from switchboard.investigation.deadline import investigation_deadline
-from switchboard.investigation.report_validation import evaluate_policy_claims
+from switchboard.investigation.report_validation import (
+    PolicyReview,
+    evaluate_policy_claims,
+)
 from switchboard.investigation.tools import TOOLS, InvestigationContext
 from switchboard.investigation.workflow import (
     EndpointChangeWorkflowState,
@@ -47,6 +50,10 @@ def test_bedrock_signing_tools_policy_review_and_access_failure(model_id):
         calls.append((dict(request.headers), body))
         assert body["model"] == model_id
         assert "thinking" not in body
+        expected_tokens = 8192
+        if model_id == "minimax.minimax-m2.5":
+            expected_tokens = 25_000 if len(calls) == 2 else 20_000
+        assert body["max_completion_tokens"] == expected_tokens
         if len(calls) == 3:
             return httpx.Response(403, json={"error": {"message": "Denied"}})
         message = (
@@ -90,6 +97,9 @@ def test_bedrock_signing_tools_policy_review_and_access_failure(model_id):
             base_url=f"https://{HOST}{auth.base_path}",
             api_key=SecretStr("aws-sigv4"),
             http_client=client,
+            max_completion_tokens=20_000
+            if model_id == "minimax.minimax-m2.5"
+            else 8192,
             max_retries=0,
         )
         response = model.bind_tools(TOOLS).invoke("Read CHG-1042.")
@@ -179,11 +189,12 @@ def test_minimax_native_report_format_waits_for_evidence(evidence_complete):
 
 
 @pytest.mark.parametrize("deadline_expires", [False, True])
-def test_minimax_stream_assembles_tool_arguments_and_stops_at_deadline(
-    monkeypatch, deadline_expires
+@pytest.mark.parametrize("stage", ["investigation", "policy_review"])
+def test_minimax_stream_preserves_output_and_stops_at_deadline(
+    monkeypatch, deadline_expires, stage
 ):
 
-    # 1. Supply credentials and split a tool argument across streamed chunks.
+    # 1. Supply credentials and split tool arguments or review JSON across chunks.
     session = Mock()
     session.get_credentials.return_value.get_frozen_credentials.return_value = (
         ReadOnlyCredentials("AKID", "secret", "token")
@@ -191,25 +202,43 @@ def test_minimax_stream_assembles_tool_arguments_and_stops_at_deadline(
     monkeypatch.setattr(bedrock.boto3, "Session", lambda **kwargs: session)
     deadline = time.monotonic() + 300
 
-    class ToolStream(httpx.SyncByteStream):
+    class ResponseStream(httpx.SyncByteStream):
         def __iter__(self):
-            for index, arguments in enumerate(['{"ticket_', 'id":"CHG-1042"}']):
+            parts = (
+                ['{"ticket_', 'id":"CHG-1042"}']
+                if stage == "investigation"
+                else ['{"issues": ', "[]}"]
+            )
+            for index, part in enumerate(parts):
                 if index == 1 and deadline_expires:
                     monkeypatch.setattr(time, "monotonic", lambda: deadline + 1)
-                call = {
-                    "index": 0,
-                    "type": "function",
-                    "function": {"arguments": arguments},
-                }
+                delta: dict[str, object]
+                if stage == "investigation":
+                    call = {
+                        "index": 0,
+                        "type": "function",
+                        "function": {"arguments": part},
+                    }
+                    if index == 0:
+                        call["id"] = "lookup-1"
+                        call["function"]["name"] = "get_ticket"
+                    delta = {"tool_calls": [call]}
+                else:
+                    delta = {"content": part}
                 if index == 0:
-                    call["id"] = "lookup-1"
-                    call["function"]["name"] = "get_ticket"
+                    delta["role"] = "assistant"
                 chunk = {
                     "id": "completion-1",
                     "object": "chat.completion.chunk",
                     "model": "minimax.minimax-m2.5",
                     "created": 0,
-                    "choices": [{"index": 0, "delta": {"tool_calls": [call]}}],
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": delta,
+                            "finish_reason": "stop" if index == 1 else None,
+                        }
+                    ],
                 }
                 yield f"data: {json.dumps(chunk)}\n\n".encode()
             yield b"data: [DONE]\n\n"
@@ -218,11 +247,12 @@ def test_minimax_stream_assembles_tool_arguments_and_stops_at_deadline(
         body = json.loads(request.content)
         assert body["stream"] is True
         assert body["parallel_tool_calls"] is False
-        assert body["max_completion_tokens"] == 20_000
+        expected_tokens = 20_000 if stage == "investigation" else 25_000
+        assert body["max_completion_tokens"] == expected_tokens
         return httpx.Response(
             200,
             headers={"content-type": "text/event-stream"},
-            stream=ToolStream(),
+            stream=ResponseStream(),
         )
 
     # 2. Run the real model adapter against the controlled stream.
@@ -235,13 +265,27 @@ def test_minimax_stream_assembles_tool_arguments_and_stops_at_deadline(
     monkeypatch.setattr(bedrock.httpx, "Client", TestClient)
     model = bedrock.create_bedrock_model("minimax.minimax-m2.5")
 
-    # 3. Preserve complete arguments and reject work past the job deadline.
+    # 3. Preserve complete output and reject work past the job deadline.
+    def invoke():
+        if stage == "investigation":
+            return model.bind_tools(TOOLS).invoke("Read CHG-1042.")
+        return evaluate_policy_claims(
+            investigation_output=draft_report().model_dump(mode="json"),
+            policies=POLICIES,
+            model=model,
+        )
+
     with investigation_deadline(deadline):
         if deadline_expires:
             with pytest.raises(TimeoutError, match="Investigation deadline reached"):
-                model.bind_tools(TOOLS).invoke("Read CHG-1042.")
+                invoke()
         else:
-            response = model.bind_tools(TOOLS).invoke("Read CHG-1042.")
-            assert response.tool_calls[0]["args"] == {"ticket_id": "CHG-1042"}
+            response = invoke()
+            if stage == "investigation":
+                assert isinstance(response, AIMessage)
+                assert response.tool_calls[0]["args"] == {"ticket_id": "CHG-1042"}
+            else:
+                assert isinstance(response, PolicyReview)
+                assert not response.issues
     assert model.http_client is not None
     model.http_client.close()

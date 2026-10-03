@@ -85,6 +85,11 @@ def policy_review_model(model: BaseChatModel):
             max_tokens=16384,
         )
     if isinstance(model, ChatOpenAI):
+        if model.model_name == "minimax.minimax-m2.5":
+            return model.bind(
+                response_format={"type": "json_object"},
+                max_completion_tokens=25_000,
+            )
         return model.bind(response_format={"type": "json_object"})
     return model
 

@@ -3,13 +3,19 @@
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from threading import Lock
+from unittest.mock import Mock
 from uuid import UUID, uuid4
 
 import boto3
 import pytest
 from botocore.exceptions import ClientError
+from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+from langchain_core.messages import AIMessage, ToolMessage
+from openai import LengthFinishReasonError
+from openai.types.chat import ChatCompletion
 
 from switchboard.demo.portfolio import initialize_demo_portfolio
 from switchboard.dynamodb import DynamoStore
@@ -19,8 +25,10 @@ from switchboard.investigation.report_validation import (
 )
 from switchboard.jobs import fail, process_message, read, submit
 from switchboard.maintenance import maintain
+from switchboard.models import Ticket
 from switchboard.storage import StorageError, WorkspaceStorage
 from tests import test_dynamodb
+from tests.test_report_validation import draft_report
 
 dynamo = test_dynamodb.dynamo
 
@@ -58,6 +66,71 @@ def message(storage, identifier):
         "generation": storage.get_workspace()["generation"],
         "run_id": str(identifier),
     }
+
+
+def expire_job_lease(storage, run_id):
+    store = storage.transport
+    partition = store.partition(storage.workspace_id)
+    claimed = store.get(partition, f"JOB#{run_id}")
+    store.transaction(
+        storage.workspace_id,
+        [
+            store.replace(
+                partition, f"JOB#{run_id}", claimed, {**claimed, "lease_until": 0}
+            )
+        ],
+    )
+
+
+@dataclass(frozen=True)
+class RetryModels:
+    investigator: Mock
+    reviewer: Mock
+
+
+@pytest.fixture
+def policy_length_models(monkeypatch):
+    monkeypatch.setenv("SWITCHBOARD_INVESTIGATION_MODE", "live")
+    model = GenericFakeChatModel(messages=iter([]))
+    agent = Mock()
+    draft = draft_report()
+    agent.invoke.return_value = {
+        "structured_response": draft,
+        "messages": [AIMessage(content=draft.model_dump_json())],
+    }
+    reviewer = Mock()
+    length_error = LengthFinishReasonError(
+        completion=ChatCompletion.model_validate(
+            {
+                "id": "truncated-policy-review",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "minimax.minimax-m2.5",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "length",
+                        "message": {"role": "assistant", "content": '{"issues": ['},
+                    }
+                ],
+                "usage": {
+                    "completion_tokens": 20000,
+                    "prompt_tokens": 2947,
+                    "total_tokens": 22947,
+                },
+            }
+        )
+    )
+    reviewer.invoke.side_effect = [length_error, AIMessage(content='{"issues": []}')]
+    monkeypatch.setattr("switchboard.investigation.agent.create_model", lambda: model)
+    monkeypatch.setattr(
+        "switchboard.investigation.runner.build_agent", lambda **arguments: agent
+    )
+    monkeypatch.setattr(
+        "switchboard.investigation.report_validation.policy_review_model",
+        lambda selected: reviewer,
+    )
+    return RetryModels(investigator=agent, reviewer=reviewer)
 
 
 def test_submission_delivery_terminal_duplicate_and_access(queued):
@@ -426,6 +499,236 @@ def test_empty_model_response_is_retried_without_publishing(
     )
     assert len(storage.list_runs(ticket_id="CHG-1042")) == 1
     assert store.get(partition, f"JOB#{job.run_id}")["attempt"] == 2
+
+
+def test_policy_length_retry_reuses_the_draft_and_still_requires_review(
+    queued, policy_length_models
+):
+    storage, sqs, _, _ = queued
+    job = submit_job(storage, sqs)
+    previous_proposals = storage.list_pending_proposals()
+    captured_ticket = storage.get_ticket(ticket_id="CHG-1042")
+    policy_length_models.investigator.invoke.return_value["messages"].insert(
+        0,
+        ToolMessage(
+            name="get_ticket",
+            tool_call_id="ticket-lookup",
+            content=json.dumps(captured_ticket),
+        ),
+    )
+
+    # The real queued workflow must not publish a draft after a truncated review.
+    with pytest.raises(LengthFinishReasonError):
+        process_message(message(storage, job.run_id))
+    assert not storage.list_runs(ticket_id="CHG-1042")
+    assert storage.list_pending_proposals() == previous_proposals
+    assert (
+        "ticket-lookup"
+        not in read(
+            storage=storage, employee_id="emp-alex", run_id=job.run_id
+        ).model_dump_json()
+    )
+
+    # SQS retries the same job after its lease expires, with a complete review.
+    expire_job_lease(storage, job.run_id)
+    process_message(message(storage, job.run_id))
+
+    assert policy_length_models.reviewer.invoke.call_count == 2
+    assert policy_length_models.investigator.invoke.call_count == 1
+    assert (
+        read(storage=storage, employee_id="emp-alex", run_id=job.run_id).status
+        == "completed"
+    )
+    saved = storage.list_runs(ticket_id="CHG-1042")
+    assert len(saved) == 1
+    expected_ticket = Ticket.model_validate_json(json.dumps(captured_ticket))
+    assert saved[0]["result"]["evidence"][0]["document"] == expected_ticket.model_dump(
+        mode="json"
+    )
+    assert saved[0]["result"]["messages"][0]["tool_call_id"] == "ticket-lookup"
+
+
+def test_resumed_draft_requires_a_valid_review_against_current_policies(
+    queued, policy_length_models
+):
+    storage, sqs, _, _ = queued
+    job = submit_job(storage, sqs)
+    with pytest.raises(LengthFinishReasonError):
+        process_message(message(storage, job.run_id))
+
+    # Update an existing policy after the investigator has completed its draft.
+    store = storage.transport
+    partition = store.partition(storage.workspace_id)
+    policy_key = "POLICY#endpoint-change-v2"
+    previous_policy = store.get(partition, policy_key)
+    updated_policy = {**previous_policy, "content": "Current policy revision."}
+    store.transaction(
+        storage.workspace_id,
+        [store.replace(partition, policy_key, previous_policy, updated_policy)],
+    )
+    policy_length_models.reviewer.invoke.side_effect = [AIMessage(content="{")]
+    expire_job_lease(storage, job.run_id)
+    process_message(message(storage, job.run_id))
+
+    # The reviewer sees current policy, and invalid output still fails closed.
+    inputs = policy_length_models.reviewer.invoke.call_args.args[0]
+    assert updated_policy in json.loads(inputs[1][1])["policies"]
+    assert policy_length_models.reviewer.invoke.call_count == 2
+    assert policy_length_models.investigator.invoke.call_count == 1
+    assert (
+        read(storage=storage, employee_id="emp-alex", run_id=job.run_id).status
+        == "failed"
+    )
+    assert not storage.list_runs(ticket_id="CHG-1042")
+    assert store.get(partition, f"CHECKPOINT#{job.run_id}") is None
+
+
+@pytest.mark.parametrize("damage", ["wrong_ticket", "invalid_schema"])
+def test_invalid_draft_checkpoint_fails_closed_before_review(
+    queued, policy_length_models, damage
+):
+    storage, sqs, _, _ = queued
+    job = submit_job(storage, sqs)
+    with pytest.raises(LengthFinishReasonError):
+        process_message(message(storage, job.run_id))
+
+    store = storage.transport
+    partition = store.partition(storage.workspace_id)
+    store.lease = store.get(partition, f"JOB#{job.run_id}")
+    checkpoint = store.load_checkpoint(storage.workspace_id, stage="draft")
+    assert checkpoint is not None
+    if damage == "wrong_ticket":
+        checkpoint["ticket_id"] = "CHG-1045"
+    else:
+        checkpoint["messages"] = None
+    store.save_checkpoint(storage.workspace_id, checkpoint, stage="draft")
+    store.lease = None
+    expire_job_lease(storage, job.run_id)
+    process_message(message(storage, job.run_id))
+
+    assert policy_length_models.investigator.invoke.call_count == 1
+    assert policy_length_models.reviewer.invoke.call_count == 1
+    assert store.get(partition, f"JOB#{job.run_id}")["status"] == "failed"
+    assert not storage.list_runs(ticket_id="CHG-1042")
+
+
+@pytest.mark.parametrize("change", ["employee_revoked", "ticket_reassigned"])
+def test_draft_retry_rechecks_access_before_model_calls(
+    queued, policy_length_models, change
+):
+    storage, sqs, _, _ = queued
+    job = submit_job(storage, sqs)
+    with pytest.raises(LengthFinishReasonError):
+        process_message(message(storage, job.run_id))
+
+    store = storage.transport
+    partition = store.partition(storage.workspace_id)
+    record_key = (
+        "EMPLOYEE#emp-alex" if change == "employee_revoked" else "TICKET#CHG-1042"
+    )
+    previous = store.get(partition, record_key)
+    updated = (
+        {**previous, "active": False}
+        if change == "employee_revoked"
+        else {**previous, "assigned_employee_id": "emp-priya"}
+    )
+    store.transaction(
+        storage.workspace_id, [store.replace(partition, record_key, previous, updated)]
+    )
+    expire_job_lease(storage, job.run_id)
+    process_message(message(storage, job.run_id))
+
+    assert policy_length_models.investigator.invoke.call_count == 1
+    assert policy_length_models.reviewer.invoke.call_count == 1
+    assert store.get(partition, f"JOB#{job.run_id}")["status"] == "failed"
+    assert not storage.list_runs(ticket_id="CHG-1042")
+
+
+def test_drafts_do_not_survive_reset_and_follow_retired_generation_cleanup(
+    queued, policy_length_models, monkeypatch
+):
+    storage, sqs, _, _ = queued
+    job = submit_job(storage, sqs)
+    original_message = message(storage, job.run_id)
+    with pytest.raises(LengthFinishReasonError):
+        process_message(original_message)
+
+    store = storage.transport
+    retired_partition = store.partition(storage.workspace_id)
+    draft_key = f"DRAFTCHECKPOINT#{job.run_id}"
+    assert store.get(retired_partition, draft_key) is not None
+    initialize_demo_portfolio(storage=storage)
+    process_message(original_message)
+    assert policy_length_models.reviewer.invoke.call_count == 1
+
+    # The reset's new job must investigate anew, and cleanup removes the old draft.
+    next_job = submit_job(storage, sqs)
+    process_message(message(storage, next_job.run_id))
+    assert policy_length_models.investigator.invoke.call_count == 2
+    assert len(storage.list_runs(ticket_id="CHG-1042")) == 1
+    # Retired generations keep the existing one-hour staging grace period.
+    cleanup_time = time.time() + 3601
+    monkeypatch.setattr("switchboard.maintenance.time.time", lambda: cleanup_time)
+    maintain()
+    assert store.get(retired_partition, draft_key) is None
+    assert not store.query(retired_partition, f"CHUNK#{draft_key}#")
+
+
+def test_new_jobs_and_workspaces_cannot_reuse_another_jobs_draft(
+    queued, policy_length_models
+):
+    storage, sqs, _, _ = queued
+    job = submit_job(storage, sqs)
+    with pytest.raises(LengthFinishReasonError):
+        process_message(message(storage, job.run_id))
+    store = storage.transport
+    partition = store.partition(storage.workspace_id)
+    claimed = store.get(partition, f"JOB#{job.run_id}")
+    fail(storage, claimed, "Finish the first test job")
+
+    next_job = submit_job(storage, sqs)
+    process_message(message(storage, next_job.run_id))
+    assert policy_length_models.investigator.invoke.call_count == 2
+
+    other = WorkspaceStorage(
+        str(uuid4()), transport=DynamoStore(store.table, store.client)
+    )
+    initialize_demo_portfolio(storage=other)
+    other_job = submit_job(other, sqs)
+    policy_length_models.reviewer.invoke.side_effect = [
+        AIMessage(content='{"issues": []}')
+    ]
+    process_message(message(other, other_job.run_id))
+    assert policy_length_models.investigator.invoke.call_count == 3
+    assert len(storage.list_runs(ticket_id="CHG-1042")) == 1
+    assert len(other.list_runs(ticket_id="CHG-1042")) == 1
+
+
+@pytest.mark.parametrize("stage", ["draft", "validated"])
+def test_replaced_owner_cannot_write_a_checkpoint(queued, stage):
+    storage, sqs, _, _ = queued
+    job = submit_job(storage, sqs)
+    store = storage.transport
+    partition = store.partition(storage.workspace_id)
+    saved = store.get(partition, f"JOB#{job.run_id}")
+    old = {
+        **saved,
+        "status": "running",
+        "owner": "old",
+        "lease_until": time.time() + 330,
+    }
+    store.transaction(
+        storage.workspace_id,
+        [
+            store.replace(
+                partition, f"JOB#{job.run_id}", saved, {**old, "owner": "replacement"}
+            )
+        ],
+    )
+    store.lease = old
+    with pytest.raises(StorageError, match="Records have changed"):
+        store.save_checkpoint(storage.workspace_id, {"private": True}, stage=stage)
+    assert store.load_checkpoint(storage.workspace_id, stage=stage) is None
 
 
 def test_maintenance_does_not_dispatch_revoked_pending_work(queued):

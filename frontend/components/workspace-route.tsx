@@ -48,9 +48,9 @@ export type WorkspaceRouteDescriptor =
   | { kind: "approvals"; proposalId?: string; runId?: string };
 
 export function WorkspaceRoute({ route }: { route: WorkspaceRouteDescriptor }) {
-  const { identity, currentEmployee, accountActions, onEmployeeChange } = useWorkspaceSession();
+  const { identity, onEmployeeChange } = useWorkspaceSession();
   const router = useRouter();
-  const employee = identity.mode === "demo" ? identity.employeeId : currentEmployee!.employee_id;
+  const employee = identity.employeeId;
   const queryClient = useQueryClient();
   const selectedTicketId = route.kind === "request" ? route.ticketId : null;
   const activeView = route.kind === "approvals" ? "approvals" : "work";
@@ -60,7 +60,6 @@ export function WorkspaceRoute({ route }: { route: WorkspaceRouteDescriptor }) {
   // 1. Query keys isolate each employee's data; Query manages cancellation and loading.
   const personasQuery = useQuery({
     ...demoPersonasQuery(identity),
-    enabled: identity.mode === "demo",
   });
   const ticketsQueryResult = useQuery(ticketsQuery(identity));
   const approvalsQueryResult = useQuery({
@@ -108,8 +107,6 @@ export function WorkspaceRoute({ route }: { route: WorkspaceRouteDescriptor }) {
   const job = response && !("result" in response) ? response : null;
   const jobActive = job?.status === "queued" || job?.status === "running";
   const employeeRecord = personas.find((item) => item.id === employee);
-  const employeeName = employeeRecord?.name ?? currentEmployee?.name ?? employee;
-  const employeeRole = employeeRecord?.role ?? currentEmployee?.role ?? null;
   const reconnecting = [
     personasQuery,
     ticketsQueryResult,
@@ -207,24 +204,20 @@ export function WorkspaceRoute({ route }: { route: WorkspaceRouteDescriptor }) {
 
     router.replace(requestPath(route.ticketId, route.runId), { scroll: false });
   }
-  const demoPersonaSwitcher =
-    identity.mode === "demo" ? (
-      <DemoPersonaSwitcher
-        personas={personas}
-        selectedPersonaId={employee}
-        busy={isPending || mutationsInProgress > 0}
-        onChange={changePersona}
-      />
-    ) : undefined;
+  const demoPersonaSwitcher = (
+    <DemoPersonaSwitcher
+      personas={personas}
+      selectedPersonaId={employee}
+      busy={isPending || mutationsInProgress > 0}
+      onChange={changePersona}
+    />
+  );
 
   return (
     <div className="min-h-screen bg-[#fcfcfb] lg:pl-60">
       <WorkspaceSidebar
         activeView={activeView}
-        employee={employeeName}
-        role={employeeRole}
-        accountControls={accountActions}
-        demoPersona={identity.mode === "demo" ? (employeeRecord ?? null) : undefined}
+        demoPersona={employeeRecord ?? null}
         demoPersonaSwitcher={demoPersonaSwitcher}
         onOpenWork={clearSelection}
         onOpenApprovals={openApprovals}
@@ -278,8 +271,6 @@ export function WorkspaceRoute({ route }: { route: WorkspaceRouteDescriptor }) {
                   key={selectedProposalId}
                   runId={selectedApprovalRunId}
                   proposalId={selectedProposalId}
-                  identity={identity}
-                  currentEmployee={currentEmployee}
                   employees={personas}
                   onStatusRefresh={async () => {
                     await queryClient.invalidateQueries({
@@ -299,7 +290,7 @@ export function WorkspaceRoute({ route }: { route: WorkspaceRouteDescriptor }) {
                 <div>
                   <h1 className="text-3xl font-semibold tracking-tight">My work</h1>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Customer requests assigned to your employee account.
+                    Customer requests assigned to your demo profile.
                   </p>
                 </div>
                 <div className="relative w-full max-w-sm">
@@ -421,8 +412,6 @@ export function WorkspaceRoute({ route }: { route: WorkspaceRouteDescriptor }) {
                         key={run.run_id}
                         runId={run.run_id}
                         proposalId={run.result.proposal.id}
-                        identity={identity}
-                        currentEmployee={currentEmployee}
                         employees={personas}
                         onStatusRefresh={() =>
                           queryClient.invalidateQueries({

@@ -36,7 +36,7 @@ def build_workspace_payload(
     *,
     scenario_id: str,
     selected_scenario: Scenario,
-    identity_mode: Literal["demo", "entra", "cli", "eval"],
+    identity_mode: Literal["demo", "cli", "eval"],
     updated_at: datetime | None = None,
 ) -> dict:
     """Build one validated DynamoDB workspace reset without writing partial records."""
@@ -91,7 +91,7 @@ def initialize_demo_workspace(
     storage: WorkspaceStorage,
     scenario_id: str,
     selected_scenario: Scenario,
-    identity_mode: Literal["demo", "entra", "cli", "eval"] = "demo",
+    identity_mode: Literal["demo", "cli", "eval"] = "demo",
 ) -> dict:
     """Initialize once and refuse implicit changes to an existing scenario."""
     existing = storage.get_workspace()

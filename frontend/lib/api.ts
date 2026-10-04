@@ -190,9 +190,7 @@ export type InvestigationEvidenceDetail = {
   has_changed: boolean | null;
 };
 
-export type RequestIdentity =
-  | { mode: "demo"; employeeId: string }
-  | { mode: "entra"; accountId: string; getAccessToken: () => Promise<string> };
+export type RequestIdentity = { mode: "demo"; employeeId: string };
 
 class ApiRequestError extends Error {
   readonly status: number;
@@ -241,18 +239,10 @@ export async function requestApi<T>({
   }
   headers.set("Content-Type", "application/json");
 
-  // 2. Resolve exactly one identity mechanism before sending the request.
-  if (identity.mode === "demo") {
-    headers.set("X-Demo-Persona-Id", identity.employeeId);
-  } else {
-    const accessToken = await identity.getAccessToken();
-    headers.set(
-      process.env.NEXT_PUBLIC_AWS_DEPLOYMENT === "1"
-        ? "X-Switchboard-Authorization"
-        : "Authorization",
-      `Bearer ${accessToken}`,
-    );
-  }
+  // 2. Send only the selected fictional employee to the same-origin demo API.
+  if (identity.mode !== "demo") throw new Error("Only demo profiles are supported.");
+  if (!path.startsWith("/api/")) throw new Error("Use a same-origin demo API path.");
+  headers.set("X-Demo-Persona-Id", identity.employeeId);
 
   if (process.env.NEXT_PUBLIC_AWS_DEPLOYMENT === "1" && options.body != null) {
     if (typeof options.body !== "string")
@@ -288,10 +278,10 @@ export async function requestApi<T>({
 export type CurrentEmployee = { employee_id: string; name: string; role: string };
 
 export function identityKey(identity: RequestIdentity) {
-  return identity.mode === "demo" ? ["demo", identity.employeeId] : ["entra", identity.accountId];
+  return ["demo", identity.employeeId];
 }
 
-// Keep business caches separate for every mode and account.
+// Keep business caches separate for every fictional employee.
 export const investigationKeys = {
   tickets: (identity: RequestIdentity) => ["tickets", ...identityKey(identity)] as const,
   history: (identity: RequestIdentity, ticketId: string | null) =>

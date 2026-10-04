@@ -75,7 +75,7 @@ Each workspace has an active generation. Business records use that workspace/gen
 
 Conditional transactions keep proposals and deduplication pointers together, prevent stale configuration writes, and publish job completion with its result and history. Large results use immutable chunks; readers see a completed manifest only after all chunks are saved. Browser queries use keyed reads rather than table scans. Scheduled cleanup uses bounded scans appropriate to this demo's scale.
 
-Anonymous visitors receive Secure, HttpOnly, SameSite cookies and isolated workspaces with a sliding 24-hour lifetime. The persona selector changes the fictional employee being simulated; it does not bypass server authorization. Microsoft Entra mode validates tenant, audience, delegated scope, client, timestamps, and the employee mapping. Supplying a bearer token together with a demo persona is rejected.
+Anonymous visitors receive Secure, HttpOnly, SameSite cookies and isolated workspaces with a sliding 24-hour lifetime. The profile selector offers only the three built-in fictional employees; server authorization still checks their roles and customer assignments. Account tokens and unknown profile IDs are rejected. A demo cookie cannot open an employee, CLI, evaluation, or imported workspace. Legacy non-demo authentication configuration fails closed rather than enabling profile selection over another workspace.
 
 Key implementation: [DynamoDB operations](../backend/switchboard/dynamodb.py), [request context](../backend/switchboard/api/context.py), and [authentication](../backend/switchboard/auth.py).
 

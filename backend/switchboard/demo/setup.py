@@ -18,7 +18,7 @@ def reset_demo(
     *,
     storage: WorkspaceStorage,
     scenario_id: str,
-    identity_mode: Literal["demo", "entra", "cli", "eval"] = "demo",
+    identity_mode: Literal["demo", "cli", "eval"] = "demo",
 ) -> None:
     """Atomically replace one workspace with the requested scenario records."""
     scenarios = load_scenarios()

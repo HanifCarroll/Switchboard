@@ -371,11 +371,7 @@ def fail(storage: WorkspaceStorage, job: dict, message: str):
 
 def process_message(message: dict, context: Any = None):
     # 1. Resolve only a durable job; SQS never supplies employee authority.
-    workspace_id = (
-        str(UUID(message["workspace_id"]))
-        if not message["workspace_id"].startswith("entra-")
-        else message["workspace_id"]
-    )
+    workspace_id = str(UUID(message["workspace_id"]))
     identifier = str(UUID(message["run_id"]))
     storage = WorkspaceStorage.from_environment(workspace_id=workspace_id)
     store = database(storage)

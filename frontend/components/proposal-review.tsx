@@ -9,7 +9,6 @@ import {
   proposalReviewKeys,
   type Approval,
   type RequestIdentity,
-  type CurrentEmployee,
   type ExecuteProposalResult,
   type VerifyDeliveryResult,
 } from "@/lib/api";
@@ -41,26 +40,17 @@ import {
 export function ProposalReview({
   runId,
   proposalId,
-  identity,
-  currentEmployee,
   employees,
   onStatusRefresh,
 }: {
   runId: string;
   proposalId: string;
-  identity: RequestIdentity;
-  currentEmployee: CurrentEmployee | null;
   employees: { id: string; name: string; role: string }[];
   onStatusRefresh: () => Promise<void>;
 }) {
-  const [demoEmployee, setEmployee] = useState("emp-priya");
-  const employee = identity.mode === "demo" ? demoEmployee : currentEmployee!.employee_id;
-  const reviewerIdentity: RequestIdentity =
-    identity.mode === "demo" ? { mode: "demo", employeeId: employee } : identity;
-  const role =
-    identity.mode === "demo"
-      ? employees.find((item) => item.id === employee)?.role
-      : currentEmployee?.role;
+  const [employee, setEmployee] = useState("emp-priya");
+  const reviewerIdentity: RequestIdentity = { mode: "demo", employeeId: employee };
+  const role = employees.find((item) => item.id === employee)?.role;
   const queryClient = useQueryClient();
   const url = `/api/runs/${runId}/proposals/${proposalId}`;
 
@@ -127,55 +117,48 @@ export function ProposalReview({
   const review = !error && !busy ? reviewQuery.data : undefined;
   const proposerName =
     employees.find((item) => item.id === review?.proposal.proposed_by_employee_id)?.name ??
-    (currentEmployee && currentEmployee.employee_id === review?.proposal.proposed_by_employee_id
-      ? currentEmployee.name
-      : review?.proposal.proposed_by_employee_id);
+    review?.proposal.proposed_by_employee_id;
   function employeeName(employeeId: string) {
-    return (
-      employees.find((item) => item.id === employeeId)?.name ??
-      (currentEmployee?.employee_id === employeeId ? currentEmployee.name : employeeId)
-    );
+    return employees.find((item) => item.id === employeeId)?.name ?? employeeId;
   }
 
   return (
     <section className="py-7" aria-label="Proposal review" aria-live="polite">
       <div className="flex flex-wrap items-end justify-between gap-4">
-        {identity.mode === "demo" && (
-          <Field className="w-full max-w-sm">
-            <FieldLabel htmlFor="reviewer">Review or execute as</FieldLabel>
-            <Select
-              items={employees.map((item) => ({
-                value: item.id,
-                label: `${item.name} · ${item.role.replaceAll("_", " ")}`,
-              }))}
-              disabled={busy}
-              value={employee}
-              onValueChange={(value) => {
-                if (!value) return;
-                setEmployee(value);
-                approval.reset();
-                execution.reset();
-                verification.reset();
-              }}
-            >
-              <SelectTrigger id="reviewer" className="w-full">
-                <SelectValue placeholder="Select an option" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  {employees.map((item) => (
-                    <SelectItem key={item.id} value={item.id}>
-                      {item.name} · {item.role.replaceAll("_", " ")}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-            <FieldDescription>
-              Simulated identity. Access and action permissions are checked by the server.
-            </FieldDescription>
-          </Field>
-        )}
+        <Field className="w-full max-w-sm">
+          <FieldLabel htmlFor="reviewer">Review or execute as</FieldLabel>
+          <Select
+            items={employees.map((item) => ({
+              value: item.id,
+              label: `${item.name} · ${item.role.replaceAll("_", " ")}`,
+            }))}
+            disabled={busy}
+            value={employee}
+            onValueChange={(value) => {
+              if (!value) return;
+              setEmployee(value);
+              approval.reset();
+              execution.reset();
+              verification.reset();
+            }}
+          >
+            <SelectTrigger id="reviewer" className="w-full">
+              <SelectValue placeholder="Select an option" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {employees.map((item) => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {item.name} · {item.role.replaceAll("_", " ")}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <FieldDescription>
+            Simulated identity. Access and action permissions are checked by the server.
+          </FieldDescription>
+        </Field>
         <Button
           variant="ghost"
           size="sm"

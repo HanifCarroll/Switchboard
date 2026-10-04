@@ -3,7 +3,6 @@
 import base64
 import hashlib
 import json
-import re
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -87,11 +86,7 @@ def handler(event, context):
             return _response(413, {"detail": "Event too large"})
 
         delivery = WebhookEvent.model_validate_json(body)
-        if delivery.workspace_id.startswith("entra-"):
-            if not re.fullmatch(r"entra-[a-zA-Z0-9-]+", delivery.workspace_id):
-                raise ValueError("Invalid employee workspace")
-        else:
-            UUID(delivery.workspace_id)
+        UUID(delivery.workspace_id)
         destination_path = delivery.destination.path
         headers = {
             key.lower(): value for key, value in event.get("headers", {}).items()

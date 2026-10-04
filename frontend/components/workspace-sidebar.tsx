@@ -1,26 +1,17 @@
 import type { ReactNode } from "react";
-import { CheckSquare2, Inbox, Layers3, LogIn, LogOut, UserRound } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { CheckSquare2, Inbox } from "lucide-react";
 import { DemoPersonaAvatar, DemoPersonaIndicator } from "@/components/demo-persona";
-import type { AccountActions } from "@/components/authentication-gate";
 import type { DemoPersona } from "@/lib/api";
 
 export function WorkspaceSidebar({
   activeView,
-  employee,
-  role,
-  accountControls,
   demoPersona,
   demoPersonaSwitcher,
   onOpenWork,
   onOpenApprovals,
 }: {
   activeView: "work" | "approvals";
-  employee: string;
-  role: string | null;
-  accountControls: AccountActions;
-  demoPersona?: DemoPersona | null;
+  demoPersona: DemoPersona | null;
   demoPersonaSwitcher?: ReactNode;
   onOpenWork: () => void;
   onOpenApprovals: () => void;
@@ -66,80 +57,12 @@ export function WorkspaceSidebar({
       <div className="mt-auto flex flex-col gap-3 p-3">
         <div className="border-t border-sidebar-border pt-3">
           <div className="flex items-center gap-3 rounded-lg px-2 py-2">
-            {demoPersona !== undefined ? (
-              <DemoPersonaAvatar persona={demoPersona} size="lg" />
-            ) : (
-              <Avatar size="lg">
-                <AvatarFallback>{initials(employee)}</AvatarFallback>
-              </Avatar>
-            )}
+            <DemoPersonaAvatar persona={demoPersona} size="lg" />
             <span className="min-w-0 flex-1">
-              {demoPersona !== undefined ? (
-                <DemoPersonaIndicator persona={demoPersona} />
-              ) : (
-                <>
-                  <span className="block truncate text-sm font-medium text-foreground">
-                    {employee}
-                  </span>
-                  <span className="block truncate text-xs capitalize text-muted-foreground">
-                    {role?.replaceAll("_", " ") ?? "Employee"}
-                  </span>
-                </>
-              )}
+              <DemoPersonaIndicator persona={demoPersona} />
             </span>
           </div>
           {demoPersonaSwitcher}
-          {(accountControls.onUseDemo ||
-            accountControls.onUseMicrosoft ||
-            accountControls.onSwitchAccount ||
-            accountControls.onSignOut) && (
-            <div className="mt-2 flex flex-wrap gap-2">
-              {accountControls.onUseDemo && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="justify-start text-muted-foreground hover:bg-black/[0.04] hover:text-foreground"
-                  onClick={accountControls.onUseDemo}
-                >
-                  <Layers3 className="size-4" />
-                  Use demo
-                </Button>
-              )}
-              {accountControls.onUseMicrosoft && demoPersona !== undefined && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="justify-start text-muted-foreground hover:bg-black/[0.04] hover:text-foreground"
-                  onClick={accountControls.onUseMicrosoft}
-                >
-                  <LogIn className="size-4" />
-                  Sign in with Microsoft
-                </Button>
-              )}
-              {accountControls.onSwitchAccount && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="justify-start text-muted-foreground hover:bg-black/[0.04] hover:text-foreground"
-                  onClick={accountControls.onSwitchAccount}
-                >
-                  <UserRound className="size-4" />
-                  Switch
-                </Button>
-              )}
-              {accountControls.onSignOut && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="justify-start text-muted-foreground hover:bg-black/[0.04] hover:text-foreground"
-                  onClick={accountControls.onSignOut}
-                >
-                  <LogOut className="size-4" />
-                  Sign out
-                </Button>
-              )}
-            </div>
-          )}
         </div>
       </div>
     </aside>
@@ -163,14 +86,4 @@ function SwitchboardMark() {
       <circle cx="7" cy="27" r="2.25" fill="currentColor" stroke="none" />
     </svg>
   );
-}
-
-function initials(employee: string) {
-  return employee
-    .replace(/^emp-/, "")
-    .split(/[-\s]/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join("");
 }

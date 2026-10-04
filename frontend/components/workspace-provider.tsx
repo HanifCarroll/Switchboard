@@ -2,23 +2,16 @@
 
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  AuthenticationGate,
-  type AccountActions,
-  type AuthenticatedSession,
-} from "@/components/authentication-gate";
+import { AuthenticationGate } from "@/components/authentication-gate";
 import {
   identityKey,
   readRetryDelay,
   shouldRetryReadRequest,
-  type CurrentEmployee,
   type RequestIdentity,
 } from "@/lib/api";
 
 type WorkspaceSession = {
   identity: RequestIdentity;
-  currentEmployee: CurrentEmployee | null;
-  accountActions: AccountActions;
   onEmployeeChange: (employeeId: string) => void;
 };
 
@@ -43,12 +36,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   return (
     <QueryClientProvider client={authenticationClient}>
       <AuthenticationGate>
-        {(session, accountActions) => (
-          <AuthenticatedWorkspace
-            key={JSON.stringify(identityKey(session.identity))}
-            session={session}
-            accountActions={accountActions}
-          >
+        {(session) => (
+          <AuthenticatedWorkspace key={JSON.stringify(identityKey(session.identity))}>
             {children}
           </AuthenticatedWorkspace>
         )}
@@ -57,32 +46,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   );
 }
 
-function AuthenticatedWorkspace({
-  session,
-  accountActions,
-  children,
-}: {
-  session: AuthenticatedSession;
-  accountActions: AccountActions;
-  children: ReactNode;
-}) {
+function AuthenticatedWorkspace({ children }: { children: ReactNode }) {
   const [queryClient] = useState(createQueryClient);
   const [demoEmployee, setDemoEmployee] = useState("emp-alex");
   const identity = useMemo<RequestIdentity>(
-    () =>
-      session.identity.mode === "demo"
-        ? { mode: "demo", employeeId: demoEmployee }
-        : session.identity,
-    [session.identity, demoEmployee],
+    () => ({ mode: "demo", employeeId: demoEmployee }),
+    [demoEmployee],
   );
   const value = useMemo(
     () => ({
       identity,
-      currentEmployee: session.employee,
-      accountActions,
       onEmployeeChange: setDemoEmployee,
     }),
-    [identity, session.employee, accountActions],
+    [identity],
   );
 
   return (

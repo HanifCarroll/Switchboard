@@ -39,14 +39,14 @@ fi
 # 2. Run the same API and website, using synchronous fixture investigations locally.
 (
   cd "$repository/backend"
-  exec env SWITCHBOARD_AUTH_MODE=hybrid SWITCHBOARD_RUNTIME=local \
+  exec env SWITCHBOARD_AUTH_MODE=demo SWITCHBOARD_RUNTIME=local \
     SWITCHBOARD_INVESTIGATION_MODE="$investigation_mode" \
     uv run uvicorn switchboard.api:app --reload --host 127.0.0.1 --port 8000
 ) &
 api_pid=$!
 (
   cd "$repository/frontend"
-  exec env NEXT_PUBLIC_AUTH_MODE=hybrid ./node_modules/.bin/next dev --hostname 127.0.0.1
+  exec env ./node_modules/.bin/next dev --hostname 127.0.0.1
 ) &
 web_pid=$!
 wait

@@ -493,7 +493,6 @@ Resources:
           AWS_LWA_READINESS_CHECK_HEALTHY_STATUS: 200-399
           AWS_LWA_ENABLE_COMPRESSION: 'true'
           AWS_LWA_INVOKE_MODE: buffered
-          NEXT_PUBLIC_AUTH_MODE: demo
           AWS_LWA_READINESS_CHECK_PORT: '8081'
           PORT: '8081'
       ReservedConcurrentExecutions:

@@ -17,7 +17,7 @@ Switchboard models an internal team managing webhook endpoint changes for a B2B 
 
 The dashboard presents evidence, decision criteria, blockers, approvals, and action receipts. Investigations run in the background and can be reopened after navigation or reload. Each visitor receives an isolated workspace and can switch between fictional employee personas to explore the access rules.
 
-The company, customer data, and delivery events are synthetic. Investigations use a real model through Amazon Bedrock or the DeepSeek API; delivery verification sends a signed HTTP event to a separate AWS receiver and checks its durable receipt. Microsoft Entra authentication is supported for configured workspaces; the public demo uses fictional identities.
+The company, customer data, and delivery events are synthetic. Investigations use a real model through Amazon Bedrock or the DeepSeek API; delivery verification sends a signed HTTP event to a separate AWS receiver and checks its durable receipt. Visitors choose from three built-in fictional profiles: Alex Rivera (implementation engineer), Priya Shah (technical lead), and Ben Okafor (support specialist). The demo does not accept work-account sign-in.
 
 ## Engineering
 
@@ -62,8 +62,6 @@ BEDROCK_PROFILE=hc-studio SWITCHBOARD_MODEL_PROVIDER=bedrock \
 ```
 
 The `BEDROCK_PROFILE` is separate from the local database credentials. Model access and evaluation quality must be verified before selecting a provider for a hosted release. The public demo uses MiniMax M2.5 through Amazon Bedrock.
-
-For Microsoft sign-in, copy the browser values from `frontend/entra.example.env` to `frontend/.env.local` and server values from `backend/entra.example.env` to `backend/.env`. Local authentication supports both demo and Microsoft sign-in.
 
 ## Checks
 

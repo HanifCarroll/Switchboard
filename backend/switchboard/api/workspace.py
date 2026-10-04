@@ -8,6 +8,7 @@ from switchboard.api.context import (
     get_request_context,
     require_demo_context,
 )
+from switchboard.demo.workspaces import DEMO_PERSONA_IDS
 from switchboard.integrations.employee_directory import EmployeeSession
 from switchboard.models import Role
 
@@ -50,4 +51,5 @@ def read_demo_personas(
     return [
         DemoPersona.model_validate(item)
         for item in context.storage.list_active_employees()
+        if item["id"] in DEMO_PERSONA_IDS
     ]

@@ -8,6 +8,7 @@ from switchboard.demo.portfolio import initialize_demo_portfolio
 from switchboard.storage import WorkspaceStorage
 
 WORKSPACE_LIFETIME_SECONDS = 24 * 60 * 60
+DEMO_PERSONA_IDS = frozenset({"emp-alex", "emp-priya", "emp-ben"})
 
 
 @dataclass(frozen=True)
@@ -30,7 +31,11 @@ def open_demo_workspace(
     if workspace_id is not None:
         storage = base_storage.for_workspace(workspace_id=str(workspace_id))
         existing = storage.get_workspace()
-        if existing is not None:
+        if (
+            existing is not None
+            and existing.get("identityMode") == "demo"
+            and not existing.get("import_hash")
+        ):
             updated_at = datetime.fromisoformat(existing["updatedAt"])
             if (now - updated_at).total_seconds() <= WORKSPACE_LIFETIME_SECONDS:
                 storage.touch_workspace(updated_at=now.isoformat())

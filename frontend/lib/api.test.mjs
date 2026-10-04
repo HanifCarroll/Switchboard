@@ -229,67 +229,19 @@ test("demo requests send only the selected employee identity", async (t) => {
   );
 });
 
-test("Entra requests acquire a token and send no simulated identity", async (t) => {
-  let acquired = false;
-  t.mock.method(globalThis, "fetch", async (_path, options) => {
-    assert.equal(acquired, true);
-    const headers = new Headers(options.headers);
-    assert.equal(headers.get("Authorization"), "Bearer api-token");
-    assert.equal(headers.has("X-Demo-Persona-Id"), false);
-    return Response.json({ employee_id: "emp-alex" });
-  });
-  await requestApi({
-    path: "/api/me",
-    identity: {
-      mode: "entra",
-      accountId: "tenant:alex",
-      getAccessToken: async () => {
-        acquired = true;
-        return "api-token";
-      },
-    },
-  });
-});
-
-test("identity header overrides are rejected before acquiring tokens or fetching", async (t) => {
+test("identity header overrides are rejected before fetching", async (t) => {
   t.mock.method(globalThis, "fetch", () => assert.fail("Must not send a request"));
-  for (const identity of [
-    { mode: "demo", employeeId: "emp-alex" },
-    {
-      mode: "entra",
-      accountId: "tenant:alex",
-      getAccessToken: async () => assert.fail("Must not acquire a token"),
-    },
+  const identity = { mode: "demo", employeeId: "emp-alex" };
+  for (const headers of [
+    { authorization: "Bearer override" },
+    new Headers({ "X-DEMO-PERSONA-ID": "emp-priya" }),
+    [["Authorization", "Bearer override"]],
   ]) {
-    for (const headers of [
-      { authorization: "Bearer override" },
-      new Headers({ "X-DEMO-PERSONA-ID": "emp-priya" }),
-      [["Authorization", "Bearer override"]],
-    ]) {
-      await assert.rejects(
-        requestApi({ path: "/api/me", identity, options: { headers } }),
-        /identity headers/i,
-      );
-    }
+    await assert.rejects(
+      requestApi({ path: "/api/me", identity, options: { headers } }),
+      /identity headers/i,
+    );
   }
-});
-
-test("token acquisition failures never send the business request", async (t) => {
-  t.mock.method(globalThis, "fetch", () => assert.fail("Must not send a request"));
-  const signInError = new Error("Sign in again");
-  await assert.rejects(
-    requestApi({
-      path: "/api/me",
-      identity: {
-        mode: "entra",
-        accountId: "tenant:alex",
-        getAccessToken: async () => {
-          throw signInError;
-        },
-      },
-    }),
-    (error) => error === signInError,
-  );
 });
 
 test("a rejected write is surfaced without retrying", async (t) => {
@@ -307,26 +259,6 @@ test("a rejected write is surfaced without retrying", async (t) => {
     /Execution not permitted/,
   );
   assert.equal(requests, 1);
-});
-
-test("Entra history is account-scoped and cannot reuse demo data", async (t) => {
-  t.mock.method(globalThis, "fetch", async (_path, options) =>
-    Response.json({ identity: new Headers(options.headers).get("Authorization") }),
-  );
-  const client = new QueryClient();
-  t.after(() => client.clear());
-  const alex = { mode: "entra", accountId: "alex", getAccessToken: async () => "alex-token" };
-  const priya = { mode: "entra", accountId: "priya", getAccessToken: async () => "priya-token" };
-  assert.deepEqual(await client.fetchQuery(historyQuery(alex, "CHG-1042")), {
-    identity: "Bearer alex-token",
-  });
-  assert.deepEqual(await client.fetchQuery(historyQuery(priya, "CHG-1042")), {
-    identity: "Bearer priya-token",
-  });
-  assert.notDeepEqual(
-    historyQuery(alex, "CHG-1042").queryKey,
-    historyQuery({ mode: "demo", employeeId: "alex" }, "CHG-1042").queryKey,
-  );
 });
 
 test("queued run polling stops after completion or failure", () => {
@@ -353,11 +285,33 @@ test("AWS writes hash the exact body and keep application identity separate", as
   const body = JSON.stringify({ ticket_id: "CHG-1042" });
   await requestApi({
     path: "/api/investigations",
-    identity: { mode: "entra", accountId: "account", getAccessToken: async () => "token" },
+    identity: { mode: "demo", employeeId: "emp-alex" },
     options: { method: "POST", body },
   });
   assert.equal(captured.headers.get("Authorization"), null);
-  assert.equal(captured.headers.get("X-Switchboard-Authorization"), "Bearer token");
+  assert.equal(captured.headers.get("X-Switchboard-Authorization"), null);
+  assert.equal(captured.headers.get("X-Demo-Persona-Id"), "emp-alex");
   const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
   assert.equal(captured.headers.get("X-Amz-Content-Sha256"), Buffer.from(hash).toString("hex"));
+});
+
+test("legacy account identities and external API URLs are rejected before fetching", async (t) => {
+  t.mock.method(globalThis, "fetch", () => assert.fail("Must not send a request"));
+  await assert.rejects(
+    requestApi({
+      path: "/api/me",
+      identity: {
+        mode: "entra",
+        accountId: "account",
+        getAccessToken: async () => assert.fail("Must not acquire tokens"),
+      },
+    }),
+    /Only demo profiles/,
+  );
+  for (const path of ["https://private.example/api/me", "//private.example/api/me", "/admin"]) {
+    await assert.rejects(
+      requestApi({ path, identity: { mode: "demo", employeeId: "emp-alex" } }),
+      /same-origin demo API/,
+    );
+  }
 });

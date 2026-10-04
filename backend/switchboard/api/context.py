@@ -6,9 +6,8 @@ from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, Response
 
-from switchboard.auth import get_auth_mode, get_entra_employee_id
-from switchboard.demo.scenarios import initialize_demo_workspace, load_scenarios
-from switchboard.demo.workspaces import open_demo_workspace
+from switchboard.auth import get_auth_mode
+from switchboard.demo.workspaces import DEMO_PERSONA_IDS, open_demo_workspace
 from switchboard.integrations.employee_directory import EmployeeSession
 from switchboard.storage import WorkspaceStorage
 
@@ -17,7 +16,7 @@ DEMO_WORKSPACE_COOKIE = "switchboard-demo-workspace"
 
 @dataclass(frozen=True)
 class RequestContext:
-    identity_mode: Literal["demo", "entra"]
+    identity_mode: Literal["demo"]
     employee_id: str
     workspace_id: str
     storage: WorkspaceStorage
@@ -25,30 +24,18 @@ class RequestContext:
 
 def get_request_context(request: Request, response: Response) -> RequestContext:
     """Resolve trusted identity and isolated storage once per request."""
-    auth_mode = get_auth_mode()
-    has_authorization = "Authorization" in request.headers
+    get_auth_mode()
 
-    # 1. Bind verified Entra identity to its own durable workspace.
-    if auth_mode == "entra" or (auth_mode == "hybrid" and has_authorization):
-        employee_id = get_entra_employee_id(request)
-        workspace_id = f"entra-{employee_id}"
-        storage = WorkspaceStorage.from_environment(workspace_id=workspace_id)
-        initialize_demo_workspace(
-            storage=storage,
-            scenario_id="baseline",
-            selected_scenario=load_scenarios()["baseline"],
-            identity_mode="entra",
-        )
-        response.headers["X-Switchboard-Workspace"] = workspace_id
-        return RequestContext(
-            identity_mode="entra",
-            employee_id=employee_id,
-            workspace_id=workspace_id,
-            storage=storage,
-        )
+    # 1. Accept only a built-in demo profile, without account credentials.
+    if (
+        "Authorization" in request.headers
+        or "X-Switchboard-Authorization" in request.headers
+    ):
+        raise HTTPException(status_code=400, detail="Account sign-in is unavailable")
 
-    if has_authorization:
-        raise HTTPException(status_code=400, detail="Microsoft sign-in is disabled")
+    employee_id = request.headers.get("X-Demo-Persona-Id", "emp-alex")
+    if employee_id not in DEMO_PERSONA_IDS:
+        raise HTTPException(status_code=403, detail="Demo persona unavailable")
 
     # 2. Restore or create the anonymous visitor's isolated demo workspace.
     try:
@@ -70,7 +57,6 @@ def get_request_context(request: Request, response: Response) -> RequestContext:
             samesite="lax",
         )
 
-    employee_id = request.headers.get("X-Demo-Persona-Id", "emp-alex")
     response.headers["X-Switchboard-Workspace"] = str(opened.workspace.id)
     try:
         EmployeeSession(

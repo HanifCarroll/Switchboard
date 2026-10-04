@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from switchboard.api.investigations import router as investigations_router
 from switchboard.api.proposals import router as proposals_router
 from switchboard.api.workspace import router as workspace_router
-from switchboard.auth import get_auth_mode, get_entra_settings
+from switchboard.auth import get_auth_mode
 from switchboard.investigation.mode import get_investigation_mode
 from switchboard.storage import StorageError
 
@@ -19,8 +19,7 @@ from switchboard.storage import StorageError
 async def lifespan(_app: FastAPI):
     load_dotenv(Path(__file__).resolve().parents[2] / ".env")
     get_investigation_mode()
-    if get_auth_mode() in {"entra", "hybrid"}:
-        get_entra_settings()
+    get_auth_mode()
     yield
 
 
